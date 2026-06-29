@@ -10,7 +10,7 @@ import requests
 st.set_page_config(page_title="프라이빗 통합 투자 플랫폼", layout="wide")
 
 # ==========================================
-# 🧭 공통 기능: CNN Fear & Greed & 자동완성 리스트
+# 🧭 공통 기능: CNN Fear & Greed & 주식 정보 가져오기
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_fear_and_greed():
@@ -25,14 +25,22 @@ def get_fear_and_greed():
         return None, None
 
 @st.cache_data(ttl=600)
-def get_current_price(ticker):
-    if not ticker or ticker == "직접 입력": return 0.0
+def get_stock_info(ticker):
+    """현재가와 예상 주당 배당금을 함께 반환"""
+    if not ticker or ticker == "직접 입력": return 0.0, 0.0
     try:
-        return float(yf.Ticker(ticker).history(period="1d")['Close'].iloc[-1])
+        t = yf.Ticker(ticker)
+        # 현재가 추출
+        price = float(t.history(period="1d")['Close'].iloc[-1])
+        # 배당금 추출 (우선적으로 dividendRate를 찾고, 없으면 trailingAnnualDividendRate 적용)
+        info = t.info
+        dividend = info.get('dividendRate', info.get('trailingAnnualDividendRate', 0.0))
+        if dividend is None: dividend = 0.0
+        return price, float(dividend)
     except:
-        return 0.0
+        return 0.0, 0.0
 
-# 종목 검색용 자동완성 딕셔너리 (한국 KOSPI/KOSDAQ + 미국 주요 주식/ETF)
+# 종목 검색용 자동완성 딕셔너리
 SEARCH_OPTIONS = [
     "직접 입력 (여기에 없는 종목)",
     "삼성전자 (005930.KS)", "SK하이닉스 (000660.KS)", "현대차 (005380.KS)", "기아 (000270.KS)",
@@ -47,11 +55,35 @@ SEARCH_OPTIONS = [
     "SPDR S&P 500 (SPY)", "Invesco QQQ (QQQ)", "iShares 20+ Year Treasury (TLT)", "Schwab US Dividend (SCHD)"
 ]
 
-# 메인 타이틀 & F&G Index 최상단 고정 배치
-st.title("📊 프라이빗 통합 투자 플랫폼")
+# ==========================================
+# 🎨 메인 타이틀 및 F&G 배너 (첨부 이미지 스타일 적용)
+# ==========================================
+st.markdown("<h1 style='text-align: center;'>📊 프라이빗 통합 투자 플랫폼</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: #8b90a8; margin-top: -10px;'>물타기 · 지수분할 · 기대수익률 · 자산배분 통합 계산</p>", unsafe_allow_html=True)
+
 fng_score, fng_rating = get_fear_and_greed()
 if fng_score:
-    st.info(f"**🧭 현재 CNN Fear & Greed Index:** {fng_score} 점 ({fng_rating})")
+    # 점수에 따른 색상 지정
+    color_map = {
+        "Extreme Fear": ("#e74c3c", "rgba(231,76,60,0.15)"),
+        "Fear": ("#e67e22", "rgba(230,126,34,0.15)"),
+        "Neutral": ("#f1c40f", "rgba(241,196,15,0.15)"),
+        "Greed": ("#2ecc71", "rgba(46,204,113,0.15)"),
+        "Extreme Greed": ("#27ae60", "rgba(39,174,96,0.15)")
+    }
+    text_color, bg_color = color_map.get(fng_rating, ("#f1c40f", "rgba(241,196,15,0.1)"))
+
+    banner_html = f"""
+    <div style="background-color: #222536; border: 1px solid #2e3147; border-radius: 12px; padding: 16px 20px; display: flex; align-items: center; justify-content: space-between; margin-bottom: 30px; box-shadow: 0 4px 12px rgba(0,0,0,0.15);">
+        <div style="font-weight: 700; color: #e8eaf0; font-size: 1.1em; display: flex; align-items: center; gap: 8px;">
+            🧭 CNN Fear & Greed Index
+        </div>
+        <div style="font-size: 1.6em; font-weight: 800; color: #e8eaf0; display: flex; align-items: center; gap: 12px;">
+            <span style="font-size: 0.5em; padding: 4px 12px; border-radius: 20px; background: {bg_color}; color: {text_color}; border: 1px solid {text_color}; text-transform: uppercase;">{fng_rating}</span> {fng_score}
+        </div>
+    </div>
+    """
+    st.markdown(banner_html, unsafe_allow_html=True)
 st.divider()
 
 # ==========================================
@@ -103,8 +135,6 @@ def get_aaa_score(series, idx=-1):
 # [모드 1] 동적 자산배분 대시보드
 # ==========================================
 if app_mode == "📊 동적 자산배분 대시보드":
-    st.subheader("💡 동적 자산배분 실시간 리밸런싱 대시보드")
-    
     try:
         with st.spinner('금융 시장 데이터를 실시간 동기화 중입니다...'):
             data = load_financial_data(all_tickers)
@@ -123,7 +153,6 @@ if app_mode == "📊 동적 자산배분 대시보드":
             ])
             tip_score = get_baa_score(month_data["TIP"])
             
-            # --- 탭 1. 밸런스 전략 ---
             with tab1:
                 col1, col2 = st.columns([1, 2])
                 buy1 = {}
@@ -140,7 +169,6 @@ if app_mode == "📊 동적 자산배분 대시보드":
                 with col2:
                     st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy1.items()]))
 
-            # --- 탭 2. 미국밸런스 섹터 전략 ---
             with tab2:
                 col3, col4 = st.columns([1, 2])
                 buy2 = {}
@@ -157,7 +185,6 @@ if app_mode == "📊 동적 자산배분 대시보드":
                 with col4:
                     st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy2.items()]))
 
-            # --- 탭 3. LAA ---
             with tab3:
                 col5, col6 = st.columns([1, 2])
                 buy3 = {"IWD": "25.0%", "GLD": "25.0%", "IEF": "25.0%"}
@@ -180,7 +207,6 @@ if app_mode == "📊 동적 자산배분 대시보드":
                 with col6:
                     st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy3.items()]))
 
-            # --- 탭 4. 한국형가속자산배분전략 ---
             with tab4:
                 col7, col8 = st.columns([1, 2])
                 buy4 = {}
@@ -206,15 +232,13 @@ if app_mode == "📊 동적 자산배분 대시보드":
 # [모드 2] 프라이빗 투자 계산기
 # ==========================================
 elif app_mode == "🧮 프라이빗 투자 계산기":
-    st.subheader("💡 프라이빗 투자 계산기")
-    
     tab_stock, tab_idx, tab_asset, tab_roe = st.tabs([
         "📊 개별종목 물타기", "📉 지수 물타기", "🗂️ 자산배분 리밸런싱", "📈 기대수익률(R)"
     ])
     
     # --- 1. 개별종목 물타기 ---
     with tab_stock:
-        st.write("개별종목 분할매수 스케줄 계산 (입력 시 자동완성 지원)")
+        st.write("개별종목 분할매수 스케줄 계산 (입력 시 가격 및 배당금 자동완성 지원)")
         
         selected_stock = st.selectbox("🔍 종목 검색 (클릭 후 타이핑하세요)", options=SEARCH_OPTIONS, index=1)
         
@@ -224,16 +248,16 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
         else:
             stock_ticker = selected_stock.split("(")[-1].replace(")", "").strip()
             
-        fetched_price = get_current_price(stock_ticker) if stock_ticker else 0.0
+        fetched_price, fetched_div = get_stock_info(stock_ticker) if stock_ticker else (0.0, 0.0)
         
         c1, c2, c3, c4 = st.columns(4)
         budget = c1.number_input("총 투자 금액 (원)", value=15000000, step=1000000)
+        start_price = c2.number_input("1회차 매수 가격 (자동입력)", value=float(fetched_price) if fetched_price > 0 else 14000.0, step=100.0)
+        dividend_input = c3.number_input("예상 주당 배당금 (자동입력)", value=float(fetched_div), step=10.0)
+        steps = c4.number_input("분할 횟수", min_value=2, max_value=20, value=5)
         
-        # 조회된 가격을 기본값으로 세팅 (사용자가 수정 가능)
-        start_price = c2.number_input("1회차 매수 가격 (조회값 자동입력)", value=float(fetched_price) if fetched_price > 0 else 14000.0, step=100.0)
-        
-        steps = c3.number_input("분할 횟수", min_value=2, max_value=20, value=5)
-        drop_type = c4.radio("하락폭 설정", ["일괄 (매회 동일)", "직접 입력"])
+        st.divider()
+        drop_type = st.radio("하락폭 설정", ["일괄 (매회 동일)", "직접 입력"], horizontal=True)
         
         drops = []
         if drop_type == "일괄 (매회 동일)":
@@ -263,12 +287,15 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
                 res.append({"회차": f"{i}차 ({i}배수)", "목표금액": round(target_amt), "매수가격": curr_price, "매수수량": shares, "체결금액": actual})
             
             st.dataframe(pd.DataFrame(res).style.format({"목표금액": "{:,.0f}원", "매수가격": "{:,.0f}원", "체결금액": "{:,.0f}원", "매수수량": "{:,.0f}주"}), use_container_width=True)
-            st.success(f"**총 매수금액:** {t_spent:,.0f}원 | **평균단가:** {int(t_spent/t_shares) if t_shares > 0 else 0:,.0f}원 | **누적수량:** {t_shares:,.0f}주")
+            
+            avg_price = int(t_spent/t_shares) if t_shares > 0 else 0
+            yield_rate = (dividend_input / avg_price) * 100 if avg_price > 0 and dividend_input > 0 else 0.0
+            st.success(f"**총 매수금액:** {t_spent:,.0f}원 | **평균단가:** {avg_price:,.0f}원 | **예상 배당률:** {yield_rate:.2f}% | **누적수량:** {t_shares:,.0f}주")
 
     # --- 2. 지수 물타기 ---
     with tab_idx:
-        st.write("지수/ETF 분할매수 스케줄 계산 (입력 시 자동완성 지원)")
-        selected_idx = st.selectbox("🔍 지수/ETF 검색", options=SEARCH_OPTIONS, index=21, key="idx_search") # KODEX 200 기본 선택
+        st.write("지수/ETF 분할매수 스케줄 계산 (입력 시 가격 자동완성 지원)")
+        selected_idx = st.selectbox("🔍 지수/ETF 검색", options=SEARCH_OPTIONS, index=21, key="idx_search") 
         
         idx_ticker = ""
         if selected_idx == "직접 입력 (여기에 없는 종목)":
@@ -276,7 +303,7 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
         else:
             idx_ticker = selected_idx.split("(")[-1].replace(")", "").strip()
             
-        fetched_idx_price = get_current_price(idx_ticker) if idx_ticker else 0.0
+        fetched_idx_price, _ = get_stock_info(idx_ticker) if idx_ticker else (0.0, 0.0)
 
         i1, i2, i3, i4 = st.columns(4)
         idx_budget = i1.number_input("지수 총 투자 금액", value=15000000, step=1000000)
@@ -307,7 +334,6 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
         st.write("포트폴리오 비중 조절 (리밸런싱) 계산기")
         total_asset_budget = st.number_input("총 투자 운용 금액 (원)", value=100000000, step=1000000)
         
-        # 기본 자산 세팅
         if 'asset_df' not in st.session_state:
             st.session_state.asset_df = pd.DataFrame([
                 {"자산명 (선택)": "KODEX 200 (069500.KS)", "현재가(원)": 35000.0, "목표비중(%)": 30.0, "보유수량(주)": 0},
@@ -316,7 +342,6 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
                 {"자산명 (선택)": "ACE KRX금현물 (411060.KS)", "현재가(원)": 13000.0, "목표비중(%)": 20.0, "보유수량(주)": 0}
             ])
             
-        # 표 열 속성 지정 (자산명 열을 드롭다운으로 변경)
         column_config = {
             "자산명 (선택)": st.column_config.SelectboxColumn("자산명 (클릭하여 검색)", options=SEARCH_OPTIONS[1:], width="large", required=True),
             "현재가(원)": st.column_config.NumberColumn("현재가(원)", format="%d"),
@@ -336,7 +361,7 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
                         asset_str = row["자산명 (선택)"]
                         if asset_str and "(" in asset_str:
                             ticker = asset_str.split("(")[-1].replace(")", "").strip()
-                            price = get_current_price(ticker)
+                            price, _ = get_stock_info(ticker)
                             if price > 0:
                                 updated_df.at[idx, "현재가(원)"] = price
                     st.session_state.asset_df = updated_df
