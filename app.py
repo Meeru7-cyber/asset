@@ -31,7 +31,7 @@ try:
         data = load_financial_data(all_assets)
         
     # 월말 데이터 추출 (안전하게 처리)
-    month_data = data.resample('M').last()
+    month_data = data.resample('ME').last()
     
     if len(month_data) < 13:
         st.error("모멘텀 점수를 산출하기 위한 과거 데이터(최소 13개월)가 부족합니다.")
