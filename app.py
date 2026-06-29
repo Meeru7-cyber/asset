@@ -4,227 +4,372 @@ import numpy as np
 import datetime
 import yfinance as yf
 import pandas_datareader.data as web
+import requests
 
 # 페이지 기본 설정
-st.set_page_config(page_title="통합 동적 자산배분 대시보드", layout="wide")
+st.set_page_config(page_title="프라이빗 통합 투자 플랫폼", layout="wide")
 
-st.title("📊 통합 동적 자산배분 실시간 리밸런싱 대시보드")
-st.markdown("매월 말 각 전략의 알고리즘과 거시경제 지표를 분석하여 실시간 최적의 투자 비중을 안내합니다.")
+# ==========================================
+# 🧭 공통 기능: CNN Fear & Greed & 자동완성 리스트
+# ==========================================
+@st.cache_data(ttl=3600)
+def get_fear_and_greed():
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        res = requests.get("https://production.dataviz.cnn.io/index/fearandgreed/graphdata", headers=headers, timeout=5)
+        data = res.json()
+        score = int(data['fear_and_greed']['score'])
+        rating = data['fear_and_greed']['rating']
+        return score, rating
+    except:
+        return None, None
 
-# ----------------------------------------------------
-# 1. 자산군 및 이름 매핑 정의
-# ----------------------------------------------------
-# 전략 1: 밸런스 전략
+@st.cache_data(ttl=600)
+def get_current_price(ticker):
+    if not ticker or ticker == "직접 입력": return 0.0
+    try:
+        return float(yf.Ticker(ticker).history(period="1d")['Close'].iloc[-1])
+    except:
+        return 0.0
+
+# 종목 검색용 자동완성 딕셔너리 (한국 KOSPI/KOSDAQ + 미국 주요 주식/ETF)
+SEARCH_OPTIONS = [
+    "직접 입력 (여기에 없는 종목)",
+    "삼성전자 (005930.KS)", "SK하이닉스 (000660.KS)", "현대차 (005380.KS)", "기아 (000270.KS)",
+    "NAVER (035420.KS)", "카카오 (035720.KS)", "삼성전기 (009150.KS)", "삼성화재 (000810.KS)",
+    "삼성물산 (028260.KS)", "삼성SDI (006400.KS)", "LG화학 (051910.KS)", "LG에너지솔루션 (373220.KS)",
+    "셀트리온 (068270.KS)", "KB금융 (105560.KS)", "신한지주 (055550.KS)", "하나금융지주 (086790.KS)",
+    "에코프로 (086520.KQ)", "에코프로비엠 (247540.KQ)", "두산에너빌리티 (034020.KS)", "POSCO홀딩스 (005490.KS)",
+    "KODEX 200 (069500.KS)", "TIGER 미국나스닥100 (133690.KS)", "TIGER 미국S&P500 (360750.KS)",
+    "KODEX 미국S&P500TR (379800.KS)", "KODEX 미국채10년선물 (308620.KS)", "ACE KRX금현물 (411060.KS)",
+    "KODEX 선진국MSCI World (251350.KS)", "KODEX 단기채권 (153130.KS)", "TIGER 단기통안채 (130680.KS)",
+    "Apple (AAPL)", "Microsoft (MSFT)", "NVIDIA (NVDA)", "Tesla (TSLA)", "Alphabet (GOOGL)",
+    "SPDR S&P 500 (SPY)", "Invesco QQQ (QQQ)", "iShares 20+ Year Treasury (TLT)", "Schwab US Dividend (SCHD)"
+]
+
+# 메인 타이틀 & F&G Index 최상단 고정 배치
+st.title("📊 프라이빗 통합 투자 플랫폼")
+fng_score, fng_rating = get_fear_and_greed()
+if fng_score:
+    st.info(f"**🧭 현재 CNN Fear & Greed Index:** {fng_score} 점 ({fng_rating})")
+st.divider()
+
+# ==========================================
+# 🧭 사이드바 및 공통 변수
+# ==========================================
+st.sidebar.title("네비게이션")
+app_mode = st.sidebar.radio("원하시는 기능을 선택하세요:", ["📊 동적 자산배분 대시보드", "🧮 프라이빗 투자 계산기"])
+st.sidebar.caption("데이터 제공: Yahoo Finance, FRED, CNN")
+
 strat1_off = ["QQQ", "VEU", "VWO", "TLT", "IEF", "DBC", "VNQ"]
 strat1_def = ["IEF", "BIL"]
-
-# 전략 2: 미국밸런스 섹터 전략
 strat2_off = ["IBB", "IGV", "SKYY", "SOXX", "XLE", "XRT", "IEF", "DBC"]
 strat2_def = ["IEF", "BIL"]
-
-# 전략 3: LAA 전략
 laa_assets = ["IWD", "GLD", "IEF", "QQQ", "SHY", "SPY"]
-
-# 전략 4: 한국형가속자산배분전략 (지정된 6종목 구성)
 strat4_off = ["251350.KS", "133690.KS"]
 strat4_def = ["153130.KS", "130680.KS", "308620.KS", "132030.KS"]
 
-# 한글 이름 매핑 사전
 asset_names = {
-    "251350.KS": "KODEX 선진국MSCI World",
-    "133690.KS": "TIGER 미국나스닥100",
-    "153130.KS": "KODEX 단기채권",
-    "130680.KS": "TIGER 단기통안채",
-    "308620.KS": "KODEX 미국채10년선물",
-    "132030.KS": "KODEX 단기채권PLUS",
-    "QQQ": "Invesco QQQ (미국 나스닥)",
-    "SPY": "SPDR S&P 500 ETF",
-    "IEF": "iShares 7-10 Year Treasury Bond",
-    "BIL": "SPDR Bloomberg 1-3 Month T-Bill",
-    "SHY": "iShares 1-3 Year Treasury Bond",
-    "GLD": "SPDR Gold Shares (금)",
-    "IWD": "iShares Russell 1000 Value ETF"
+    "251350.KS": "KODEX 선진국MSCI World", "133690.KS": "TIGER 미국나스닥100",
+    "153130.KS": "KODEX 단기채권", "130680.KS": "TIGER 단기통안채",
+    "308620.KS": "KODEX 미국채10년선물", "132030.KS": "KODEX 단기채권PLUS",
+    "QQQ": "Invesco QQQ", "SPY": "SPDR S&P 500", "IEF": "iShares 7-10Y Treasury",
+    "BIL": "SPDR 1-3M T-Bill", "SHY": "iShares 1-3Y Treasury", "GLD": "SPDR Gold",
+    "IWD": "iShares Russell 1000 Value"
 }
 
-# 중복 제거한 전체 티커 리스트 수집
 all_tickers = list(set(strat1_off + strat1_def + strat2_off + strat2_def + laa_assets + strat4_off + strat4_def + ["TIP"]))
 
-# ----------------------------------------------------
-# 2. 데이터 로드 및 전처리
-# ----------------------------------------------------
-@st.cache_data(ttl=14400) # 4시간 데이터 캐싱
+@st.cache_data(ttl=14400)
 def load_financial_data(tickers):
     start_date = (datetime.date.today() - datetime.timedelta(days=730)).strftime('%Y-%m-%d')
-    end_date = datetime.date.today().strftime('%Y-%m-%d')
-    df = yf.download(tickers, start=start_date, end=end_date)
-    if 'Close' in df.columns:
-        df = df['Close']
-    df = df.dropna()
-    return df
+    df = yf.download(tickers, start=start_date)
+    if 'Close' in df.columns: df = df['Close']
+    return df.dropna()
 
 @st.cache_data(ttl=14400)
 def load_fred_data():
     start_date = (datetime.date.today() - datetime.timedelta(days=730)).strftime('%Y-%m-%d')
-    unrate = web.DataReader("UNRATE", "fred", start_date)
-    return unrate
+    return web.DataReader("UNRATE", "fred", start_date)
 
-# BAA용 모멘텀 스코어 (1, 3, 6, 9, 12개월 수익률 합)
 def get_baa_score(series, idx=-1):
-    m1 = (series.iloc[idx] - series.iloc[idx-1]) / series.iloc[idx-1]
-    m3 = (series.iloc[idx] - series.iloc[idx-3]) / series.iloc[idx-3]
-    m6 = (series.iloc[idx] - series.iloc[idx-6]) / series.iloc[idx-6]
-    m9 = (series.iloc[idx] - series.iloc[idx-9]) / series.iloc[idx-9]
-    m12 = (series.iloc[idx] - series.iloc[idx-12]) / series.iloc[idx-12]
-    return m1 + m3 + m6 + m9 + m12
+    return sum([(series.iloc[idx] - series.iloc[idx-m]) / series.iloc[idx-m] for m in [1, 3, 6, 9, 12]])
 
-# AAA(가속)용 모멘텀 스코어 (1, 3, 6개월 수익률 합)
 def get_aaa_score(series, idx=-1):
-    m1 = (series.iloc[idx] - series.iloc[idx-1]) / series.iloc[idx-1]
-    m3 = (series.iloc[idx] - series.iloc[idx-3]) / series.iloc[idx-3]
-    m6 = (series.iloc[idx] - series.iloc[idx-6]) / series.iloc[idx-6]
-    return m1 + m3 + m6
+    return sum([(series.iloc[idx] - series.iloc[idx-m]) / series.iloc[idx-m] for m in [1, 3, 6]])
 
-# ----------------------------------------------------
-# 3. 메인 화면 연산 및 UI 렌더링
-# ----------------------------------------------------
-try:
-    with st.spinner('금융 시장 및 미 연준 거시경제 데이터를 실시간 동기화 중입니다...'):
-        data = load_financial_data(all_tickers)
-        unrate_data = load_fred_data()
-        
-    month_data = data.resample('ME').last()
+
+# ==========================================
+# [모드 1] 동적 자산배분 대시보드
+# ==========================================
+if app_mode == "📊 동적 자산배분 대시보드":
+    st.subheader("💡 동적 자산배분 실시간 리밸런싱 대시보드")
     
-    if len(month_data) < 13:
-        st.error("모멘텀 산출에 필요한 최소 역사적 데이터(13개월)가 부족합니다.")
-    else:
-        latest_date = month_data.index[-1].strftime('%Y년 %m월 %d일')
-        st.subheader(f"📅 실시간 데이터 기준일: {latest_date}")
+    try:
+        with st.spinner('금융 시장 데이터를 실시간 동기화 중입니다...'):
+            data = load_financial_data(all_tickers)
+            unrate_data = load_fred_data()
+            
+        month_data = data.resample('ME').last()
         
-        # 4개의 탭 구성 (요청하신 명칭 수정 반영)
-        tab1, tab2, tab3, tab4 = st.tabs([
-            "📌 1. 밸런스 전략", 
-            "🚀 2. 미국밸런스 섹터 전략", 
-            "🛡️ 3. LAA 전략", 
-            "⚡ 4. 한국형가속자산배분전략"
-        ])
+        if len(month_data) < 13:
+            st.error("데이터가 부족합니다.")
+        else:
+            st.write(f"📅 실시간 분석 기준일: **{month_data.index[-1].strftime('%Y년 %m월 %d일')}**")
+            
+            tab1, tab2, tab3, tab4 = st.tabs([
+                "📌 1. 밸런스 전략", "🚀 2. 미국밸런스 섹터 전략", 
+                "🛡️ 3. LAA 전략", "⚡ 4. 한국형가속자산배분전략"
+            ])
+            tip_score = get_baa_score(month_data["TIP"])
+            
+            # --- 탭 1. 밸런스 전략 ---
+            with tab1:
+                col1, col2 = st.columns([1, 2])
+                buy1 = {}
+                with col1:
+                    st.metric("🎗️ TIP 스코어", f"{tip_score:.4f}")
+                    if tip_score > 0:
+                        st.success("📈 공격형 자산 매수장")
+                        top4 = pd.Series({a: get_baa_score(month_data[a]) for a in strat1_off}).nlargest(4)
+                        for a in top4.index: buy1[a] = "25.0%"
+                    else:
+                        st.warning("📉 방어형 안전자산 대피장")
+                        top1 = pd.Series({a: get_baa_score(month_data[a]) for a in strat1_def}).nlargest(1)
+                        buy1[top1.index[0]] = "100.0%"
+                with col2:
+                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy1.items()]))
+
+            # --- 탭 2. 미국밸런스 섹터 전략 ---
+            with tab2:
+                col3, col4 = st.columns([1, 2])
+                buy2 = {}
+                with col3:
+                    st.metric("🎗️ TIP 스코어", f"{tip_score:.4f}")
+                    if tip_score > 0:
+                        st.success("📈 공격형 자산 매수장")
+                        top4 = pd.Series({a: get_baa_score(month_data[a]) for a in strat2_off}).nlargest(4)
+                        for a in top4.index: buy2[a] = "25.0%"
+                    else:
+                        st.warning("📉 방어형 안전자산 대피장")
+                        top1 = pd.Series({a: get_baa_score(month_data[a]) for a in strat2_def}).nlargest(1)
+                        buy2[top1.index[0]] = "100.0%"
+                with col4:
+                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy2.items()]))
+
+            # --- 탭 3. LAA ---
+            with tab3:
+                col5, col6 = st.columns([1, 2])
+                buy3 = {"IWD": "25.0%", "GLD": "25.0%", "IEF": "25.0%"}
+                
+                spy_curr = data['SPY'].iloc[-1]
+                spy_200 = data['SPY'].rolling(200).mean().iloc[-1]
+                unrate_curr = unrate_data['UNRATE'].iloc[-1]
+                unrate_12 = unrate_data['UNRATE'].rolling(12).mean().iloc[-1]
+                
+                cond1 = spy_curr < spy_200
+                cond2 = unrate_curr > unrate_12
+                
+                with col5:
+                    if cond1 and cond2:
+                        st.warning("🚨 불황장 ➔ **SHY 매수**")
+                        buy3["SHY"] = "25.0%"
+                    else:
+                        st.info("☀️ 평시/회복기 ➔ **QQQ 매수**")
+                        buy3["QQQ"] = "25.0%"
+                with col6:
+                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy3.items()]))
+
+            # --- 탭 4. 한국형가속자산배분전략 ---
+            with tab4:
+                col7, col8 = st.columns([1, 2])
+                buy4 = {}
+                aaa_scores = pd.Series({a: get_aaa_score(month_data[a]) for a in strat4_off})
+                max_sc = aaa_scores.max()
+                
+                with col7:
+                    if max_sc > 0:
+                        st.success("📈 공격형 자산 집중")
+                        buy4[aaa_scores.nlargest(1).index[0]] = "100.0%"
+                    else:
+                        st.warning("📉 방어형 자산 대피")
+                        def_scores = pd.Series({a: month_data[a].iloc[-1]/month_data[a].iloc[-2] for a in strat4_def})
+                        buy4[def_scores.nlargest(1).index[0]] = "100.0%"
+                with col8:
+                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy4.items()]))
+
+    except Exception as e:
+        st.error(f"오류가 발생했습니다: {e}")
+
+
+# ==========================================
+# [모드 2] 프라이빗 투자 계산기
+# ==========================================
+elif app_mode == "🧮 프라이빗 투자 계산기":
+    st.subheader("💡 프라이빗 투자 계산기")
+    
+    tab_stock, tab_idx, tab_asset, tab_roe = st.tabs([
+        "📊 개별종목 물타기", "📉 지수 물타기", "🗂️ 자산배분 리밸런싱", "📈 기대수익률(R)"
+    ])
+    
+    # --- 1. 개별종목 물타기 ---
+    with tab_stock:
+        st.write("개별종목 분할매수 스케줄 계산 (입력 시 자동완성 지원)")
         
-        # 카나리아 자산 스코어 계산 (전략 1, 2 공통 적용)
-        tip_score = get_baa_score(month_data["TIP"])
+        selected_stock = st.selectbox("🔍 종목 검색 (클릭 후 타이핑하세요)", options=SEARCH_OPTIONS, index=1)
         
-        # --- [탭 1: 1. 밸런스 전략] ---
-        with tab1:
-            st.markdown("**(공격: QQQ, VEU, VWO, TLT, IEF, DBC, VNQ / 수비: IEF, BIL)**")
-            col1, col2 = st.columns([1, 2])
-            buy1 = {}
-            with col1:
-                st.metric(label="🎗️ TIP 카나리아 스코어", value=f"{tip_score:.4f}")
-                if tip_score > 0:
-                    st.success("📈 **시장 국면:** 공격형 자산 매수장")
-                    scores1 = {asset: get_baa_score(month_data[asset]) for asset in strat1_off}
-                    top4_1 = pd.Series(scores1).sort_values(ascending=False).nlargest(4)
-                    for asset in top4_1.index: buy1[asset] = "25.0%"
-                else:
-                    st.warning("📉 **시장 국면:** 방어형 안전자산 대피장")
-                    scores1 = {asset: get_baa_score(month_data[asset]) for asset in strat1_def}
-                    top1_1 = pd.Series(scores1).sort_values(ascending=False).nlargest(1)
-                    buy1[top1_1.index[0]] = "100.0%"
-            with col2:
-                st.write("🎯 **이번 달 목표 포트폴리오 비중**")
-                df_b1 = pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy1.items()])
-                st.table(df_b1)
-
-        # --- [탭 2: 2. 미국밸런스 섹터 전략] ---
-        with tab2:
-            st.markdown("**(공격: IBB, IGV, SKYY, SOXX, XLE, XRT, IEF, DBC / 수비: IEF, BIL)**")
-            col3, col4 = st.columns([1, 2])
-            buy2 = {}
-            with col3:
-                st.metric(label="🎗️ TIP 카나리아 스코어", value=f"{tip_score:.4f}")
-                if tip_score > 0:
-                    st.success("📈 **시장 국면:** 공격형 자산 매수장")
-                    scores2 = {asset: get_baa_score(month_data[asset]) for asset in strat2_off}
-                    top4_2 = pd.Series(scores2).sort_values(ascending=False).nlargest(4)
-                    for asset in top4_2.index: buy2[asset] = "25.0%"
-                else:
-                    st.warning("📉 **시장 국면:** 방어형 안전자산 대피장")
-                    scores2 = {asset: get_baa_score(month_data[asset]) for asset in strat2_def}
-                    top1_2 = pd.Series(scores2).sort_values(ascending=False).nlargest(1)
-                    buy2[top1_2.index[0]] = "100.0%"
-            with col4:
-                st.write("🎯 **이번 달 목표 포트폴리오 비중**")
-                df_b2 = pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy2.items()])
-                st.table(df_b2)
-
-        # --- [탭 3: LAA] ---
-        with tab3:
-            st.markdown("**(고정자산 75%: IWD, GLD, IEF 각각 25% / 타이밍자산 25%: QQQ 또는 SHY)**")
-            col5, col6 = st.columns([1, 2])
-            buy3 = {"IWD": "25.0%", "GLD": "25.0%", "IEF": "25.0%"}
+        stock_ticker = ""
+        if selected_stock == "직접 입력 (여기에 없는 종목)":
+            stock_ticker = st.text_input("종목 코드 직접 입력 (예: 005930.KS, AAPL)")
+        else:
+            stock_ticker = selected_stock.split("(")[-1].replace(")", "").strip()
             
-            spy_close = data['SPY']
-            spy_200ma = spy_close.rolling(window=200).mean()
-            current_spy = spy_close.iloc[-1]
-            current_spy_200ma = spy_200ma.iloc[-1]
-            cond1_bear = current_spy < current_spy_200ma
-            
-            unrate_data['12ma'] = unrate_data['UNRATE'].rolling(window=12).mean()
-            unrate_clean = unrate_data.dropna()
-            current_unrate = unrate_clean['UNRATE'].iloc[-1]
-            current_unrate_12ma = unrate_clean['12ma'].iloc[-1]
-            
-            with col5:
-                if cond1_bear: st.error(f"❌ S&P500 ({current_spy:.2f}) < 200이평선 ({current_spy_200ma:.2f})")
-                else: st.success(f"▲ S&P500 ({current_spy:.2f}) >= 200이평선 ({current_spy_200ma:.2f})")
+        fetched_price = get_current_price(stock_ticker) if stock_ticker else 0.0
+        
+        c1, c2, c3, c4 = st.columns(4)
+        budget = c1.number_input("총 투자 금액 (원)", value=15000000, step=1000000)
+        
+        # 조회된 가격을 기본값으로 세팅 (사용자가 수정 가능)
+        start_price = c2.number_input("1회차 매수 가격 (조회값 자동입력)", value=float(fetched_price) if fetched_price > 0 else 14000.0, step=100.0)
+        
+        steps = c3.number_input("분할 횟수", min_value=2, max_value=20, value=5)
+        drop_type = c4.radio("하락폭 설정", ["일괄 (매회 동일)", "직접 입력"])
+        
+        drops = []
+        if drop_type == "일괄 (매회 동일)":
+            fixed_drop = st.number_input("회당 하락 금액 (원)", value=1000, step=100)
+            drops = [fixed_drop] * (steps - 1)
+        else:
+            st.write("회차별 하락 금액 설정 (이전 회차 대비)")
+            drop_cols = st.columns(steps - 1)
+            for i in range(steps - 1):
+                val = drop_cols[i].number_input(f"{i+1}➔{i+2}차", value=1000, step=100, key=f"drop_{i}")
+                drops.append(val)
                 
-                if current_unrate > current_unrate_12ma: st.error(f"❌ 미국 실업률 ({current_unrate:.1f}%) > 12달 평균 ({current_unrate_12ma:.2f}%)")
-                else: st.success(f"▲ 미국 실업률 ({current_unrate:.1f}%) <= 12달 평균 ({current_unrate_12ma:.2f}%)")
+        if st.button("개별종목 계산하기", type="primary"):
+            w_sum = (steps * (steps + 1)) / 2
+            res, t_spent, t_shares = [], 0, 0
+            curr_price = start_price
+            
+            for i in range(1, steps + 1):
+                target_amt = budget * (i / w_sum)
+                if i > 1: curr_price -= drops[i-2]
+                if curr_price <= 0: break
                 
-                if cond1_bear and (current_unrate > current_unrate_12ma):
-                    st.warning("🚨 **시장 국면:** 동시 조건 충족 불황장 ➔ **SHY 매수**")
-                    buy3["SHY"] = "25.0%"
-                else:
-                    st.info("☀️ **시장 국면:** 경제 평시/회복기 ➔ **QQQ 매수**")
-                    buy3["QQQ"] = "25.0%"
-            with col6:
-                st.write("🎯 **이번 달 목표 포트폴리오 비중**")
-                df_b3 = pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy3.items()])
-                st.table(df_b3)
+                shares = round(target_amt / curr_price)
+                actual = shares * curr_price
+                t_spent += actual
+                t_shares += shares
+                res.append({"회차": f"{i}차 ({i}배수)", "목표금액": round(target_amt), "매수가격": curr_price, "매수수량": shares, "체결금액": actual})
+            
+            st.dataframe(pd.DataFrame(res).style.format({"목표금액": "{:,.0f}원", "매수가격": "{:,.0f}원", "체결금액": "{:,.0f}원", "매수수량": "{:,.0f}주"}), use_container_width=True)
+            st.success(f"**총 매수금액:** {t_spent:,.0f}원 | **평균단가:** {int(t_spent/t_shares) if t_shares > 0 else 0:,.0f}원 | **누적수량:** {t_shares:,.0f}주")
 
-        # --- [탭 4: 한국형가속자산배분전략] ---
-        with tab4:
-            st.markdown("**(공격: 선진국MSCI, 나스닥100 / 수비: 단기채, 단기통안채, 미국채10년선물, 단기채PLUS)**")
-            col7, col8 = st.columns([1, 2])
-            buy4 = {}
+    # --- 2. 지수 물타기 ---
+    with tab_idx:
+        st.write("지수/ETF 분할매수 스케줄 계산 (입력 시 자동완성 지원)")
+        selected_idx = st.selectbox("🔍 지수/ETF 검색", options=SEARCH_OPTIONS, index=21, key="idx_search") # KODEX 200 기본 선택
+        
+        idx_ticker = ""
+        if selected_idx == "직접 입력 (여기에 없는 종목)":
+            idx_ticker = st.text_input("ETF 코드 직접 입력", key="idx_custom")
+        else:
+            idx_ticker = selected_idx.split("(")[-1].replace(")", "").strip()
             
-            # 지정된 2개 공격자산의 1, 3, 6개월 모멘텀 스코어 계산
-            aaa_scores = {asset: get_aaa_score(month_data[asset]) for asset in strat4_off}
-            aaa_series = pd.Series(aaa_scores)
-            max_score = aaa_series.max()
+        fetched_idx_price = get_current_price(idx_ticker) if idx_ticker else 0.0
+
+        i1, i2, i3, i4 = st.columns(4)
+        idx_budget = i1.number_input("지수 총 투자 금액", value=15000000, step=1000000)
+        idx_start = i2.number_input("첫 매수 지수/단가 (자동입력)", value=float(fetched_idx_price) if fetched_idx_price > 0 else 35000.0, step=100.0)
+        idx_drop = i3.number_input("구간별 하락률 (%)", value=5.0, step=0.5)
+        idx_steps = i4.number_input("지수 분할 횟수", min_value=2, max_value=20, value=5)
+        
+        if st.button("지수 계산하기", type="primary"):
+            w_sum = (idx_steps * (idx_steps + 1)) / 2
+            res_idx, t_spent_idx, t_shares_idx = [], 0, 0
             
-            with col7:
-                st.write("📊 **공격 자산별 모멘텀 지표 (1+3+6M)**")
-                df_aaa_sc = pd.DataFrame(list(aaa_scores.items()), columns=['Ticker', '모멘텀 스코어']).set_index('Ticker')
-                st.dataframe(df_aaa_sc.style.format("{:.4f}"), use_container_width=True)
+            for i in range(1, idx_steps + 1):
+                target_amt = idx_budget * (i / w_sum)
+                curr_idx = idx_start * (1 - (idx_drop / 100) * (i - 1))
+                if curr_idx <= 0: break
                 
-                if max_score > 0:
-                    st.success(f"📈 최고 스코어({max_score:.4f}) > 0 ➔ **공격형 자산 100% 집중**")
-                    top1_aaa = aaa_series.nlargest(1)
-                    buy4[top1_aaa.index[0]] = "100.0%"
-                else:
-                    st.warning(f"📉 최고 스코어({max_score:.4f}) <= 0 ➔ **방어형 자산 대피 (최근 1달 우수 자산)**")
-                    # 지정된 4개 방어자산 평가
-                    def_momentum = {}
-                    for asset in strat4_def:
-                        def_momentum[asset] = month_data[asset].iloc[-1] / month_data[asset].iloc[-2]
-                    
-                    def_series = pd.Series(def_momentum)
-                    top1_def = def_series.nlargest(1)
-                    buy4[top1_def.index[0]] = "100.0%"
+                shares = round(target_amt / curr_idx)
+                actual = shares * curr_idx
+                t_spent_idx += actual
+                t_shares_idx += shares
+                res_idx.append({"회차": f"{i}차 (-{idx_drop*(i-1)}%)", "목표금액": round(target_amt), "매수지수": round(curr_idx, 2), "매수수량": shares, "체결금액": round(actual)})
             
-            with col8:
-                st.write("🎯 **이번 달 목표 포트폴리오 비중**")
-                df_b4 = pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy4.items()])
-                st.table(df_b4)
+            st.dataframe(pd.DataFrame(res_idx).style.format({"목표금액": "{:,.0f}원", "체결금액": "{:,.0f}원", "매수수량": "{:,.0f}주"}), use_container_width=True)
+            st.success(f"**총 매수금액:** {t_spent_idx:,.0f}원 | **평균단가:** {int(t_spent_idx/t_shares_idx) if t_shares_idx > 0 else 0:,.0f}원 | **누적수량:** {t_shares_idx:,.0f}주")
 
-except Exception as e:
-    st.error(f"데이터 연산 가공 중 예측하지 못한 오류가 발생했습니다: {e}")
+    # --- 3. 자산배분 리밸런싱 ---
+    with tab_asset:
+        st.write("포트폴리오 비중 조절 (리밸런싱) 계산기")
+        total_asset_budget = st.number_input("총 투자 운용 금액 (원)", value=100000000, step=1000000)
+        
+        # 기본 자산 세팅
+        if 'asset_df' not in st.session_state:
+            st.session_state.asset_df = pd.DataFrame([
+                {"자산명 (선택)": "KODEX 200 (069500.KS)", "현재가(원)": 35000.0, "목표비중(%)": 30.0, "보유수량(주)": 0},
+                {"자산명 (선택)": "TIGER 미국S&P500 (360750.KS)", "현재가(원)": 15000.0, "목표비중(%)": 30.0, "보유수량(주)": 0},
+                {"자산명 (선택)": "KODEX 미국채10년선물 (308620.KS)", "현재가(원)": 11000.0, "목표비중(%)": 20.0, "보유수량(주)": 0},
+                {"자산명 (선택)": "ACE KRX금현물 (411060.KS)", "현재가(원)": 13000.0, "목표비중(%)": 20.0, "보유수량(주)": 0}
+            ])
+            
+        # 표 열 속성 지정 (자산명 열을 드롭다운으로 변경)
+        column_config = {
+            "자산명 (선택)": st.column_config.SelectboxColumn("자산명 (클릭하여 검색)", options=SEARCH_OPTIONS[1:], width="large", required=True),
+            "현재가(원)": st.column_config.NumberColumn("현재가(원)", format="%d"),
+            "목표비중(%)": st.column_config.NumberColumn("목표비중(%)", min_value=0.0, max_value=100.0),
+            "보유수량(주)": st.column_config.NumberColumn("보유수량(주)", min_value=0)
+        }
+
+        edited_df = st.data_editor(st.session_state.asset_df, num_rows="dynamic", column_config=column_config, use_container_width=True)
+        st.session_state.asset_df = edited_df
+        
+        btn_col1, btn_col2 = st.columns([1, 4])
+        with btn_col1:
+            if st.button("🔄 현재가 일괄 업데이트"):
+                with st.spinner("현재가를 조회중입니다..."):
+                    updated_df = edited_df.copy()
+                    for idx, row in updated_df.iterrows():
+                        asset_str = row["자산명 (선택)"]
+                        if asset_str and "(" in asset_str:
+                            ticker = asset_str.split("(")[-1].replace(")", "").strip()
+                            price = get_current_price(ticker)
+                            if price > 0:
+                                updated_df.at[idx, "현재가(원)"] = price
+                    st.session_state.asset_df = updated_df
+                    st.rerun()
+
+        total_ratio = edited_df["목표비중(%)"].sum()
+        if total_ratio != 100:
+            st.error(f"목표 비중의 합이 100%가 아닙니다. (현재: {total_ratio}%)")
+        else:
+            if st.button("계산하기", type="primary"):
+                result_df = edited_df.copy()
+                result_df["목표수량(주)"] = np.floor((total_asset_budget * (result_df["목표비중(%)"]/100)) / result_df["현재가(원)"])
+                result_df["추가매수(주)"] = result_df["목표수량(주)"] - result_df["보유수량(주)"]
+                
+                def color_action(val):
+                    color = 'green' if val > 0 else 'red' if val < 0 else 'gray'
+                    return f'color: {color}; font-weight: bold;'
+                
+                st.dataframe(result_df.style.applymap(color_action, subset=["추가매수(주)"]), use_container_width=True)
+
+    # --- 4. 기대수익률 (ROE/PBR) ---
+    with tab_roe:
+        st.write("연평균 기대수익률(R) 역산 도출")
+        st.latex(r"R = \frac{1 + ROE}{PBR^{\frac{1}{n}}} - 1")
+        
+        r1, r2, r3 = st.columns(3)
+        pbr = r1.number_input("PBR (주가순자산비율)", value=1.20, step=0.01)
+        roe = r2.number_input("ROE (%)", value=15.0, step=0.1)
+        n_years = r3.number_input("투자 기간 (N년)", value=10, step=1)
+        
+        if pbr > 0 and n_years > 0:
+            exp_return = (((1 + (roe/100)) / (pbr ** (1/n_years))) - 1) * 100
+            if exp_return >= 15:
+                st.success(f"🎉 **도출된 연평균 기대수익률:** {exp_return:.2f}% (우수)")
+            else:
+                st.info(f"📊 **도출된 연평균 기대수익률:** {exp_return:.2f}%")
