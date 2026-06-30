@@ -280,10 +280,9 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
     
     # --- 1. 개별종목 물타기 ---
     with tab_stock:
-        st.write("개별종목 분할매수 스케줄 계산 (입력 시 가격 및 배당금 자동완성 지원)")
+        st.write("개별종목 분할매수 스케줄 계산")
         
         selected_stock = st.selectbox("🔍 종목 검색 (한국 코스피/코스닥 전체 및 미국 주요 종목 지원)", options=SEARCH_OPTIONS, index=1)
-        
         stock_ticker = ""
         if selected_stock == "직접 입력 (여기에 없는 종목)":
             stock_ticker = st.text_input("종목 코드 직접 입력 (예: 005930.KS, AAPL)")
@@ -389,15 +388,15 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
         total_asset_budget_str = st.text_input("총 투자 운용 금액 (원)", key="budget_asset", on_change=format_number_str, args=("budget_asset",))
         total_asset_budget = safe_int(total_asset_budget_str)
         
-        if 'asset_df' not in st.session_state:
-            st.session_state.asset_df = pd.DataFrame([
+        # 글자 날아감 방지: 입력 테이블의 기반이 되는 데이터프레임을 고정
+        if 'asset_df_base' not in st.session_state:
+            st.session_state.asset_df_base = pd.DataFrame([
                 {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "069500" in x), "직접 입력"), "현재가(원)": 35000, "목표비중(%)": 30.0, "보유수량(주)": 0},
                 {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "360750" in x), "직접 입력"), "현재가(원)": 15000, "목표비중(%)": 30.0, "보유수량(주)": 0},
                 {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "308620" in x), "직접 입력"), "현재가(원)": 11000, "목표비중(%)": 20.0, "보유수량(주)": 0},
                 {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "411060" in x), "직접 입력"), "현재가(원)": 13000, "목표비중(%)": 20.0, "보유수량(주)": 0}
             ])
             
-        # 오류 방지: required=True 제거
         column_config = {
             "자산명 (선택)": st.column_config.SelectboxColumn("자산명 (클릭하여 전체 검색)", options=SEARCH_OPTIONS, width="large"),
             "현재가(원)": st.column_config.NumberColumn("현재가(원)", format="%d"),
@@ -405,8 +404,8 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
             "보유수량(주)": st.column_config.NumberColumn("보유수량(주)", min_value=0, format="%d")
         }
 
-        edited_df = st.data_editor(st.session_state.asset_df, num_rows="dynamic", column_config=column_config, use_container_width=True)
-        st.session_state.asset_df = edited_df
+        st.caption("💡 자산을 추가하려면 표의 빈 칸(아래쪽)을 클릭하고, 삭제하려면 맨 왼쪽 칸(인덱스)을 클릭 후 휴지통 아이콘(또는 Delete 키)을 누르세요.")
+        edited_df = st.data_editor(st.session_state.asset_df_base, num_rows="dynamic", column_config=column_config, use_container_width=True, key="asset_editor")
         
         btn_col1, btn_col2 = st.columns([1, 4])
         with btn_col1:
@@ -420,7 +419,7 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
                             price, _ = get_stock_info(ticker)
                             if price > 0:
                                 updated_df.at[idx, "현재가(원)"] = int(price)
-                    st.session_state.asset_df = updated_df
+                    st.session_state.asset_df_base = updated_df
                     st.rerun()
 
         total_ratio = edited_df["목표비중(%)"].sum()
@@ -453,44 +452,44 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
 
     # --- 4. 자산배분 백테스트 ---
     with tab_backtest:
-        st.write("과거 데이터를 기반으로 포트폴리오의 성과(CAGR, MDD, Sharpe)를 S&P500(SPY)과 비교 검증합니다.")
+        st.write("과거 데이터를 기반으로 포트폴리오의 성과(총 수익률, CAGR, MDD, Sharpe)를 S&P500(SPY)과 비교 검증합니다.")
         
         date_col1, date_col2 = st.columns(2)
         bt_start = date_col1.date_input("백테스트 시작일", datetime.date.today() - datetime.timedelta(days=365*5))
         bt_end = date_col2.date_input("백테스트 종료일", datetime.date.today())
         
-        if 'bt_df' not in st.session_state:
-            st.session_state.bt_df = pd.DataFrame([
+        # 글자 날아감 방지: 입력 테이블의 기반이 되는 데이터프레임을 고정
+        if 'bt_df_base' not in st.session_state:
+            st.session_state.bt_df_base = pd.DataFrame([
                 {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "069500" in x), ""), "투입비중(%)": 60.0},
                 {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "308620" in x), ""), "투입비중(%)": 40.0}
             ])
             
-        # 오류 방지: required=True 제거, key 매개변수 제거
         bt_config = {
             "자산명 (선택)": st.column_config.SelectboxColumn("자산명 (클릭하여 전체 검색)", options=SEARCH_OPTIONS, width="large"),
             "투입비중(%)": st.column_config.NumberColumn("투입비중(%)", min_value=0.0, max_value=100.0)
         }
         
-        edited_bt = st.data_editor(st.session_state.bt_df, num_rows="dynamic", column_config=bt_config, use_container_width=True)
-        st.session_state.bt_df = edited_bt
+        st.caption("💡 자산을 추가하려면 표의 빈 칸(아래쪽)을 클릭하고, 삭제하려면 맨 왼쪽 칸(인덱스)을 클릭 후 휴지통 아이콘(또는 Delete 키)을 누르세요.")
+        edited_bt = st.data_editor(st.session_state.bt_df_base, num_rows="dynamic", column_config=bt_config, use_container_width=True, key="bt_editor")
         
-        # 실시간 합계 출력 기능
+        # 실시간 합계 출력 및 검증
         total_bt_ratio = edited_bt["투입비중(%)"].fillna(0).sum()
         if total_bt_ratio == 100:
-            st.success(f"✅ **투입 비중 합계: {total_bt_ratio:.1f}%** (설정 완료)")
+            st.success(f"✅ **투입 비중 합계: {total_bt_ratio:.1f}%** (백테스트 실행 가능)")
         else:
-            st.error(f"❌ **투입 비중 합계: {total_bt_ratio:.1f}%** (100%로 맞춰주세요!)")
+            st.error(f"❌ **투입 비중 합계: {total_bt_ratio:.1f}%** (비중의 합을 100%로 맞춰주세요!)")
         
         if st.button("🚀 백테스트 실행", type="primary"):
             if total_bt_ratio != 100:
-                st.error(f"투입비중의 합이 100%가 아닙니다. (현재: {total_bt_ratio}%)")
+                st.error("투입비중의 합이 100%가 아닙니다. 표 아래의 합계를 확인해주세요.")
             else:
                 with st.spinner("과거 데이터를 불러오고 성과를 분석 중입니다..."):
                     asset_weights = {}
                     for idx, row in edited_bt.iterrows():
                         asset_str = row["자산명 (선택)"]
                         w = row["투입비중(%)"] / 100.0
-                        if pd.notna(w) and asset_str and "(" in asset_str:
+                        if pd.notna(w) and w > 0 and asset_str and "(" in asset_str:
                             tkr = asset_str.split("(")[-1].replace(")", "").strip()
                             asset_weights[tkr] = asset_weights.get(tkr, 0) + w
                             
@@ -507,7 +506,6 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
                             bt_price = bt_price.to_frame(tickers_to_fetch[0])
                             
                         bt_price = bt_price.ffill().dropna()
-                        
                         daily_ret = bt_price.pct_change().dropna()
                         
                         port_ret = pd.Series(0.0, index=daily_ret.index)
@@ -522,35 +520,41 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
                         
                         def get_metrics(rets, cums):
                             days = len(rets)
-                            if days < 2: return 0, 0, 0
+                            if days < 2: return 0, 0, 0, 0
                             years = days / 252
+                            
+                            # 신규: 총 누적 수익률 계산
+                            total_return = (cums.iloc[-1] / 100) - 1
                             cagr = (cums.iloc[-1] / 100) ** (1 / years) - 1
+                            
                             roll_max = cums.cummax()
                             drawdowns = cums / roll_max - 1
                             mdd = drawdowns.min()
                             sharpe = (rets.mean() / rets.std() * np.sqrt(252)) if rets.std() != 0 else 0
-                            return cagr, mdd, sharpe
+                            return total_return, cagr, mdd, sharpe
                             
-                        p_cagr, p_mdd, p_sharpe = get_metrics(port_ret, port_cum)
-                        s_cagr, s_mdd, s_sharpe = get_metrics(spy_ret, spy_cum)
+                        p_tot, p_cagr, p_mdd, p_sharpe = get_metrics(port_ret, port_cum)
+                        s_tot, s_cagr, s_mdd, s_sharpe = get_metrics(spy_ret, spy_cum)
                         
                         st.divider()
                         st.subheader("📊 백테스트 분석 결과")
                         
-                        # 실제 연산 적용 기간 (크고 뚜렷한 UI 박스로 변경)
+                        # 크고 뚜렷하게 변경된 실제 연산 적용 기간
                         actual_start = port_cum.index[0].strftime('%Y년 %m월 %d일')
                         actual_end = port_cum.index[-1].strftime('%Y년 %m월 %d일')
                         st.markdown(f"""
-                        <div style="background-color: rgba(79,142,247,0.15); border-left: 5px solid #4f8ef7; padding: 16px 20px; border-radius: 8px; margin-bottom: 24px;">
-                            <span style="font-size: 1.1em; color: #e8eaf0; font-weight: 700;">🗓️ 실제 데이터 반영 백테스트 기간: </span>
-                            <span style="font-size: 1.25em; color: #4f8ef7; font-weight: 800; margin-left: 10px; letter-spacing: 0.5px;">{actual_start} &nbsp;➔&nbsp; {actual_end}</span>
+                        <div style="background-color: rgba(79,142,247,0.12); border-left: 5px solid #4f8ef7; padding: 18px 24px; border-radius: 8px; margin-bottom: 28px;">
+                            <span style="font-size: 1.1em; color: #e8eaf0; font-weight: 700;">🗓️ 실제 데이터 반영 기간: </span>
+                            <span style="font-size: 1.2em; color: #4f8ef7; font-weight: 800; margin-left: 8px; letter-spacing: 0.5px;">{actual_start} &nbsp;➔&nbsp; {actual_end}</span>
                         </div>
                         """, unsafe_allow_html=True)
                         
-                        m1, m2, m3 = st.columns(3)
-                        m1.metric("연평균 수익률 (CAGR)", f"{p_cagr*100:.2f}%", f"SPY 벤치마크: {s_cagr*100:.2f}%")
-                        m2.metric("최대 낙폭 (MDD)", f"{p_mdd*100:.2f}%", f"SPY 벤치마크: {s_mdd*100:.2f}%", delta_color="inverse")
-                        m3.metric("위험조정수익률 (Sharpe)", f"{p_sharpe:.2f}", f"SPY 벤치마크: {s_sharpe:.2f}")
+                        # 총 수익률을 포함하여 4개 컬럼으로 분할
+                        m1, m2, m3, m4 = st.columns(4)
+                        m1.metric("총 누적 수익률", f"{p_tot*100:.2f}%", f"SPY 벤치마크: {s_tot*100:.2f}%")
+                        m2.metric("연평균 수익률 (CAGR)", f"{p_cagr*100:.2f}%", f"SPY 벤치마크: {s_cagr*100:.2f}%")
+                        m3.metric("최대 낙폭 (MDD)", f"{p_mdd*100:.2f}%", f"SPY 벤치마크: {s_mdd*100:.2f}%", delta_color="inverse")
+                        m4.metric("위험조정수익률 (Sharpe)", f"{p_sharpe:.2f}", f"SPY 벤치마크: {s_sharpe:.2f}")
                         
                         st.write("📈 **누적 자산 추이 비교 (초기 투자금 100 기준)**")
                         chart_df = pd.DataFrame({
