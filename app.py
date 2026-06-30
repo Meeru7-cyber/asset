@@ -11,6 +11,18 @@ import FinanceDataReader as fdr
 st.set_page_config(page_title="프라이빗 통합 투자 플랫폼", layout="wide")
 
 # ==========================================
+# 🧭 금액 콤마 처리용 안전 변환 함수
+# ==========================================
+def safe_int(val):
+    """콤마가 포함된 문자열을 안전하게 정수로 변환"""
+    if isinstance(val, str):
+        val = val.replace(",", "").strip()
+    try:
+        return int(float(val))
+    except:
+        return 0
+
+# ==========================================
 # 🧭 공통 기능: CNN Fear & Greed & 전체 종목 리스트 가져오기
 # ==========================================
 @st.cache_data(ttl=3600)
@@ -32,9 +44,7 @@ def get_fear_and_greed():
 
 @st.cache_data(ttl=86400)
 def get_all_search_options():
-    """한국거래소(KRX) 전체 코스피, 코스닥, ETF 종목 로드"""
     try:
-        # 코스피, 코스닥, ETF 전체 목록 가져오기
         kospi = fdr.StockListing('KOSPI')
         kospi_list = (kospi['Name'] + " (" + kospi['Code'] + ".KS)").tolist()
         
@@ -46,19 +56,17 @@ def get_all_search_options():
         
         all_kr = list(set(kospi_list + kosdaq_list + etf_list))
     except:
-        all_kr = ["삼성전자 (005930.KS)", "KODEX 200 (069500.KS)", "TIGER 미국나스닥100 (133690.KS)"] # 통신 실패 시 백업
+        all_kr = ["삼성전자 (005930.KS)", "KODEX 200 (069500.KS)", "TIGER 미국나스닥100 (133690.KS)"]
         
     us_majors = [
         "Apple (AAPL)", "Microsoft (MSFT)", "NVIDIA (NVDA)", "Tesla (TSLA)", "Alphabet (GOOGL)",
         "SPDR S&P 500 (SPY)", "Invesco QQQ (QQQ)", "iShares 20+ Year Treasury (TLT)", "Schwab US Dividend (SCHD)"
     ]
     
-    # 가나다 순 정렬 후 통합
     return ["직접 입력 (여기에 없는 종목)"] + sorted(all_kr) + us_majors
 
 @st.cache_data(ttl=600)
 def get_stock_info(ticker):
-    """현재가와 예상 주당 배당금을 함께 반환"""
     if not ticker or ticker == "직접 입력": return 0.0, 0.0
     try:
         t = yf.Ticker(ticker)
@@ -71,14 +79,13 @@ def get_stock_info(ticker):
         return 0.0, 0.0
 
 # ==========================================
-# 🎨 메인 타이틀 및 F&G 배너 (첨부 이미지 스타일 완벽 적용)
+# 🎨 메인 타이틀 및 F&G 배너
 # ==========================================
 st.markdown("<h1 style='text-align: center;'>📊 프라이빗 투자 계산기</h1>", unsafe_allow_html=True)
 st.markdown("<p style='text-align: center; color: #8b90a8; margin-top: -10px; margin-bottom: 30px;'>물타기 · 지수분할 · 기대수익률 · 자산배분 통합 계산</p>", unsafe_allow_html=True)
 
 fng_score, fng_rating = get_fear_and_greed()
 
-# F&G 상태에 따른 UI 색상 맵
 if fng_score is not None:
     color_map = {
         "Extreme Fear": ("#e74c3c", "rgba(231,76,60,0.15)"),
@@ -112,7 +119,6 @@ st.sidebar.title("네비게이션")
 app_mode = st.sidebar.radio("원하시는 기능을 선택하세요:", ["📊 동적 자산배분 대시보드", "🧮 프라이빗 투자 계산기"])
 st.sidebar.caption("데이터 제공: Yahoo Finance, FRED, CNN")
 
-# BAA/AAA 전략 자산군 세팅
 strat1_off = ["QQQ", "VEU", "VWO", "TLT", "IEF", "DBC", "VNQ"]
 strat1_def = ["IEF", "BIL"]
 strat2_off = ["IBB", "IGV", "SKYY", "SOXX", "XLE", "XRT", "IEF", "DBC"]
@@ -254,7 +260,6 @@ if app_mode == "📊 동적 자산배분 대시보드":
 # ==========================================
 elif app_mode == "🧮 프라이빗 투자 계산기":
     
-    # 전체 종목 가져오기 (시간 단축을 위해 캐싱)
     SEARCH_OPTIONS = get_all_search_options()
     
     tab_stock, tab_idx, tab_asset, tab_roe = st.tabs([
@@ -276,25 +281,30 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
         fetched_price, fetched_div = get_stock_info(stock_ticker) if stock_ticker else (0.0, 0.0)
         
         c1, c2, c3, c4 = st.columns(4)
-        # 금액 포맷팅 (format="%d" 적용)
-        budget = c1.number_input("총 투자 금액 (원)", value=15000000, step=1000000, format="%d")
-        start_price = c2.number_input("1회차 매수 가격 (자동입력)", value=int(fetched_price) if fetched_price > 0 else 14000, step=100, format="%d")
-        dividend_input = c3.number_input("예상 주당 배당금 (자동입력)", value=int(fetched_div), step=10, format="%d")
+        # 콤마 입력을 위해 text_input 사용 후 파싱
+        budget_str = c1.text_input("총 투자 금액 (원)", value="15,000,000")
+        start_price_str = c2.text_input("1회차 매수 가격 (자동입력)", value=f"{int(fetched_price):,}" if fetched_price > 0 else "14,000")
+        dividend_input_str = c3.text_input("예상 주당 배당금 (자동입력)", value=f"{int(fetched_div):,}")
         steps = c4.number_input("분할 횟수", min_value=2, max_value=20, value=5)
+        
+        budget = safe_int(budget_str)
+        start_price = safe_int(start_price_str)
+        dividend_input = safe_int(dividend_input_str)
         
         st.divider()
         drop_type = st.radio("하락폭 설정", ["일괄 (매회 동일)", "직접 입력"], horizontal=True)
         
         drops = []
         if drop_type == "일괄 (매회 동일)":
-            fixed_drop = st.number_input("회당 하락 금액 (원)", value=1000, step=100, format="%d")
+            fixed_drop_str = st.text_input("회당 하락 금액 (원)", value="1,000")
+            fixed_drop = safe_int(fixed_drop_str)
             drops = [fixed_drop] * (steps - 1)
         else:
             st.write("회차별 하락 금액 설정 (이전 회차 대비)")
             drop_cols = st.columns(steps - 1)
             for i in range(steps - 1):
-                val = drop_cols[i].number_input(f"{i+1}➔{i+2}차", value=1000, step=100, key=f"drop_{i}", format="%d")
-                drops.append(val)
+                val_str = drop_cols[i].text_input(f"{i+1}➔{i+2}차", value="1,000", key=f"drop_{i}")
+                drops.append(safe_int(val_str))
                 
         if st.button("개별종목 계산하기", type="primary"):
             w_sum = (steps * (steps + 1)) / 2
@@ -322,7 +332,6 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
     with tab_idx:
         st.write("지수/ETF 분할매수 스케줄 계산")
         
-        # 기본 선택값을 'KODEX 200'으로 찾아서 맵핑
         default_idx = next((i for i, x in enumerate(SEARCH_OPTIONS) if "069500" in x), 1)
         selected_idx = st.selectbox("🔍 지수/ETF 검색", options=SEARCH_OPTIONS, index=default_idx, key="idx_search") 
         
@@ -335,10 +344,13 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
         fetched_idx_price, _ = get_stock_info(idx_ticker) if idx_ticker else (0.0, 0.0)
 
         i1, i2, i3, i4 = st.columns(4)
-        idx_budget = i1.number_input("지수 총 투자 금액 (원)", value=15000000, step=1000000, format="%d")
-        idx_start = i2.number_input("첫 매수 지수/단가 (자동입력)", value=int(fetched_idx_price) if fetched_idx_price > 0 else 35000, step=100, format="%d")
+        idx_budget_str = i1.text_input("지수 총 투자 금액 (원)", value="15,000,000")
+        idx_start_str = i2.text_input("첫 매수 지수/단가 (자동입력)", value=f"{int(fetched_idx_price):,}" if fetched_idx_price > 0 else "35,000")
         idx_drop = i3.number_input("구간별 하락률 (%)", value=5.0, step=0.5)
         idx_steps = i4.number_input("지수 분할 횟수", min_value=2, max_value=20, value=5)
+        
+        idx_budget = safe_int(idx_budget_str)
+        idx_start = safe_int(idx_start_str)
         
         if st.button("지수 계산하기", type="primary"):
             w_sum = (idx_steps * (idx_steps + 1)) / 2
@@ -361,9 +373,11 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
     # --- 3. 자산배분 리밸런싱 ---
     with tab_asset:
         st.write("포트폴리오 비중 조절 (리밸런싱) 계산기")
-        total_asset_budget = st.number_input("총 투자 운용 금액 (원)", value=100000000, step=1000000, format="%d")
         
-        # 보유수량 입력 시 즉각적인 반응형 계산을 지원하기 위해 세션 적용
+        # 콤마 입력을 위한 text_input 사용
+        total_asset_budget_str = st.text_input("총 투자 운용 금액 (원)", value="100,000,000")
+        total_asset_budget = safe_int(total_asset_budget_str)
+        
         if 'asset_df' not in st.session_state:
             st.session_state.asset_df = pd.DataFrame([
                 {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "069500" in x), "직접 입력 (여기에 없는 종목)"), "현재가(원)": 35000, "목표비중(%)": 30.0, "보유수량(주)": 0},
@@ -374,9 +388,9 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
             
         column_config = {
             "자산명 (선택)": st.column_config.SelectboxColumn("자산명 (클릭하여 전체 검색)", options=SEARCH_OPTIONS, width="large", required=True),
-            "현재가(원)": st.column_config.NumberColumn("현재가(원)", format="%d"),
+            "현재가(원)": st.column_config.NumberColumn("현재가(원)"),
             "목표비중(%)": st.column_config.NumberColumn("목표비중(%)", min_value=0.0, max_value=100.0),
-            "보유수량(주)": st.column_config.NumberColumn("보유수량(주)", min_value=0, format="%d")
+            "보유수량(주)": st.column_config.NumberColumn("보유수량(주)", min_value=0)
         }
 
         edited_df = st.data_editor(st.session_state.asset_df, num_rows="dynamic", column_config=column_config, use_container_width=True)
@@ -401,27 +415,30 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
         if total_ratio != 100:
             st.error(f"목표 비중의 합이 100%가 아닙니다. (현재: {total_ratio}%) - 계산 결과가 정확하지 않을 수 있습니다.")
             
-        # 별도의 '계산하기' 버튼 없이 표 아래에 즉각적인 살 종목수(매수/매도) 결과 표시
         st.write("📊 **리밸런싱 실시간 연산 결과 (자동 연동)**")
         result_df = edited_df.copy()
         
-        # 목표수량 = (총자산 * 비중) / 현재가
         result_df["목표수량(주)"] = np.floor((total_asset_budget * (result_df["목표비중(%)"]/100)) / result_df["현재가(원)"]).replace([np.inf, -np.inf, np.nan], 0)
-        
-        # 살 종목수 = 목표수량 - 보유수량
         result_df["살 종목수(주)"] = result_df["목표수량(주)"] - result_df["보유수량(주)"]
         
         def color_action(val):
             color = 'green' if val > 0 else 'red' if val < 0 else 'gray'
             return f'color: {color}; font-weight: bold;'
         
-        # 화면 출력용 깔끔한 포맷
-        st.dataframe(
-            result_df[["자산명 (선택)", "현재가(원)", "보유수량(주)", "목표수량(주)", "살 종목수(주)"]].style
-            .format({"현재가(원)": "{:,.0f}원", "보유수량(주)": "{:,.0f}주", "목표수량(주)": "{:,.0f}주", "살 종목수(주)": "{:,.0f}주"})
-            .applymap(color_action, subset=["살 종목수(주)"]), 
-            use_container_width=True
-        )
+        # applymap 오류 해결을 위해 판다스 버전에 맞춘 스타일 적용
+        styled_df = result_df[["자산명 (선택)", "현재가(원)", "보유수량(주)", "목표수량(주)", "살 종목수(주)"]].style.format({
+            "현재가(원)": "{:,.0f}원", 
+            "보유수량(주)": "{:,.0f}주", 
+            "목표수량(주)": "{:,.0f}주", 
+            "살 종목수(주)": "{:,.0f}주"
+        })
+        
+        if hasattr(styled_df, "map"):
+            styled_df = styled_df.map(color_action, subset=["살 종목수(주)"])
+        else:
+            styled_df = styled_df.applymap(color_action, subset=["살 종목수(주)"])
+            
+        st.dataframe(styled_df, use_container_width=True)
 
     # --- 4. 기대수익률 (ROE/PBR) ---
     with tab_roe:
@@ -431,7 +448,7 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
         r1, r2, r3 = st.columns(3)
         pbr = r1.number_input("PBR (주가순자산비율)", value=1.20, step=0.01)
         roe = r2.number_input("ROE (%)", value=15.0, step=0.1)
-        n_years = r3.number_input("투자 기간 (N년)", value=10, step=1, format="%d")
+        n_years = r3.number_input("투자 기간 (N년)", value=10, step=1)
         
         if pbr > 0 and n_years > 0:
             exp_return = (((1 + (roe/100)) / (pbr ** (1/n_years))) - 1) * 100
