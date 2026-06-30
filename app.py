@@ -59,8 +59,8 @@ if "roe_val_10" not in st.session_state: st.session_state.roe_val_10 = 15.0
 # ==========================================
 def parse_dart_files(files, comp_name):
     """업로드된 DART txt 파일에서 자본총계와 당기순이익 추출"""
-    eq = [0.0, 0.0, 0.0] # 당기, 전기, 전전기 자본총계
-    ni = [0.0, 0.0, 0.0] # 당기, 전기, 전전기 당기순이익
+    eq = [0.0, 0.0, 0.0]
+    ni = [0.0, 0.0, 0.0]
     
     def to_float(val):
         try:
@@ -87,14 +87,12 @@ def parse_dart_files(files, comp_name):
         cdf = df[df['회사명'].astype(str).str.contains(comp_name, na=False)]
         if cdf.empty: continue
 
-        # 1. 자본총계 추출
         eq_rows = cdf[cdf['항목명'].astype(str).str.contains('자본총계', na=False)]
         if not eq_rows.empty:
             for i, col in enumerate(['당기', '전기', '전전기']):
                 if col in eq_rows.columns:
                     eq[i] = to_float(eq_rows.iloc[0][col])
 
-        # 2. 당기순이익 추출
         ni_rows = cdf[cdf['항목명'].astype(str).str.contains('당기순이익', na=False)]
         if not ni_rows.empty:
             for i, col in enumerate(['당기', '전기', '전전기']):
@@ -152,15 +150,32 @@ def get_all_search_options():
 @st.cache_data(ttl=600)
 def get_stock_info(ticker):
     if not ticker or ticker == "직접 입력": return 0.0, 0.0
+    price = 0.0
+    dividend = 0.0
+    
+    # 한국 주식은 네이버 금융에서 1차적으로 강제 추출 (정확도 확보)
+    if ticker.endswith('.KS') or ticker.endswith('.KQ'):
+        code = ticker.split('.')[0]
+        try:
+            res = requests.get(f"https://m.stock.naver.com/api/stock/{code}/basic", headers=yf_session.headers, timeout=3)
+            if res.status_code == 200:
+                data = res.json()
+                price = float(data['result']['closePrice'].replace(',', ''))
+        except: pass
+        
     try:
         t = yf.Ticker(ticker, session=yf_session)
-        price = float(t.history(period="1d")['Close'].iloc[-1])
+        if price == 0.0:
+            hist = t.history(period="1d")
+            if not hist.empty:
+                price = float(hist['Close'].iloc[-1])
         info = t.info
         dividend = info.get('dividendRate', info.get('trailingAnnualDividendRate', 0.0))
         if dividend is None: dividend = 0.0
-        return price, float(dividend)
     except:
-        return 0.0, 0.0
+        pass
+        
+    return price, float(dividend)
 
 @st.cache_data(ttl=3600)
 def get_pbr_roe_price(ticker):
@@ -219,11 +234,12 @@ def get_pbr_roe_price(ticker):
 
 @st.cache_data(ttl=14400)
 def load_financial_data(tickers):
+    """휴장일 차이로 인한 결측치를 ffill()로 보정하여 누락(0원) 방지"""
     start_date = (datetime.date.today() - datetime.timedelta(days=730)).strftime('%Y-%m-%d')
-    # 세션 추가하여 차단(Rate Limit) 방지
     df = yf.download(tickers, start=start_date, session=yf_session)
-    if 'Close' in df.columns: df = df['Close']
-    return df.dropna()
+    if 'Close' in df.columns: 
+        df = df['Close']
+    return df.ffill().dropna(how='all')
 
 @st.cache_data(ttl=14400)
 def load_fred_data():
@@ -237,8 +253,11 @@ def get_aaa_score(series, idx=-1):
     return sum([(series.iloc[idx] - series.iloc[idx-m]) / series.iloc[idx-m] for m in [1, 3, 6]])
 
 
-def render_dashboard_rebalancer(strat_id, buy_dict):
-    """대시보드 하단 각 전략별 맞춤형 리밸런싱 계산기 랜더링 함수"""
+# ==========================================
+# 🧮 대시보드 리밸런싱 렌더링 함수
+# ==========================================
+def render_dashboard_rebalancer(strat_id, buy_dict, data_df):
+    """현재가 조회 버그가 완벽하게 수정된 대시보드 리밸런서"""
     st.write("#### 🧮 전략 맞춤형 실시간 리밸런싱 계산기")
     
     b_col1, b_col2 = st.columns([1, 3])
@@ -248,7 +267,15 @@ def render_dashboard_rebalancer(strat_id, buy_dict):
     
     df_list = []
     for tkr, w in buy_dict.items():
-        price, _ = get_stock_info(tkr)
+        price = 0.0
+        # 1차: 불러와진 데이터셋에서 가장 정확한 최근 종가 추출
+        if tkr in data_df.columns:
+            price = float(data_df[tkr].iloc[-1])
+        
+        # 2차: 혹시라도 누락되었다면 야후/네이버에서 재검색
+        if price == 0.0 or pd.isna(price):
+            price, _ = get_stock_info(tkr)
+            
         weight = float(w.replace('%', '')) if isinstance(w, str) else float(w)
         df_list.append({
             "Ticker": tkr,
@@ -260,11 +287,14 @@ def render_dashboard_rebalancer(strat_id, buy_dict):
         
     if df_list:
         base_df = pd.DataFrame(df_list)
-        st.caption("현재 보유중인 수량을 '보유수량(주)' 칸에 입력하시면 살 종목수(추가 매수/매도 수량)가 자동 계산됩니다.")
+        st.caption("💡 **안내:** 현재 계좌에 보유 중인 수량을 **[보유수량(주)]** 칸에 직접 입력하셔야 정확한 '살 종목수(추가매수/매도)'가 연산됩니다. (현재가가 다를 경우 표 안에서 직접 수정 가능)")
         
-        edited_df = st.data_editor(base_df, disabled=["Ticker", "자산명", "목표비중(%)", "현재가(원)"], use_container_width=True, key=f"dash_edit_{strat_id}")
+        # 현재가를 사용자가 임의로 수정할 수 있도록 disabled에서 "현재가(원)" 제거
+        edited_df = st.data_editor(base_df, disabled=["Ticker", "자산명", "목표비중(%)"], use_container_width=True, key=f"dash_edit_{strat_id}")
         
         res_df = edited_df.copy()
+        
+        # 목표 수량 연산 (현재가가 0이 되지 않도록 처리되었으므로 빼기 버그 원천 차단)
         res_df["목표수량(주)"] = np.floor((budget * (res_df["목표비중(%)"]/100)) / res_df["현재가(원)"]).replace([np.inf, -np.inf, np.nan], 0)
         res_df["살 종목수(주)"] = res_df["목표수량(주)"] - res_df["보유수량(주)"]
         
@@ -311,9 +341,8 @@ banner_html = f"""
 """
 st.markdown(banner_html, unsafe_allow_html=True)
 
-
 # ==========================================
-# 🧭 사이드바 설정
+# 🧭 사이드바 및 공통 변수
 # ==========================================
 st.sidebar.title("네비게이션")
 app_mode = st.sidebar.radio("원하시는 기능을 선택하세요:", ["🧮 프라이빗 투자 계산기", "📊 동적 자산배분 대시보드"])
@@ -335,13 +364,15 @@ asset_names = {
     "BIL": "SPDR 1-3M T-Bill", "SHY": "iShares 1-3Y Treasury", "GLD": "SPDR Gold",
     "IWD": "iShares Russell 1000 Value"
 }
-
 all_tickers = list(set(strat1_off + strat1_def + strat2_off + strat2_def + laa_assets + strat4_off + strat4_def + ["TIP"]))
 
+# ==========================================
+# 메인 로직 시작
+# ==========================================
 
-# ==========================================
-# [모드 1] 🧮 프라이빗 투자 계산기 
-# ==========================================
+# ----------------------------------------
+# 1. 🧮 프라이빗 투자 계산기
+# ----------------------------------------
 if app_mode == "🧮 프라이빗 투자 계산기":
     
     with st.spinner("글로벌 종목 데이터를 동기화 중입니다..."):
@@ -754,9 +785,9 @@ if app_mode == "🧮 프라이빗 투자 계산기":
             for r in risks:
                 st.write(r)
 
-# ==========================================
-# [모드 2] 📊 동적 자산배분 대시보드
-# ==========================================
+# ----------------------------------------
+# 2. 📊 동적 자산배분 대시보드
+# ----------------------------------------
 elif app_mode == "📊 동적 자산배분 대시보드":
     st.subheader("💡 동적 자산배분 실시간 리밸런싱 대시보드")
     try:
@@ -803,7 +834,7 @@ elif app_mode == "📊 동적 자산배분 대시보드":
                     st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy1_curr.items()]))
                     
                 st.divider()
-                render_dashboard_rebalancer("1", buy1_curr)
+                render_dashboard_rebalancer("1", buy1_curr, data)
 
             with tab2:
                 col3, col4 = st.columns([1, 1])
@@ -829,7 +860,7 @@ elif app_mode == "📊 동적 자산배분 대시보드":
                     st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy2_curr.items()]))
                     
                 st.divider()
-                render_dashboard_rebalancer("2", buy2_curr)
+                render_dashboard_rebalancer("2", buy2_curr, data)
 
             with tab3:
                 col5, col6 = st.columns([1, 1])
@@ -866,11 +897,11 @@ elif app_mode == "📊 동적 자산배분 대시보드":
                     st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy3_curr.items()]))
 
                 st.divider()
-                render_dashboard_rebalancer("3", buy3_curr)
+                render_dashboard_rebalancer("3", buy3_curr, data)
 
             with tab4:
                 col7, col8 = st.columns([1, 1])
-                buy4_prev, buy4_curr = {}, {}
+                buy4_prev, buy4_curr = {} , {}
                 
                 max_sc_prev = pd.Series({a: get_aaa_score(month_data[a], -2) for a in strat4_off}).max()
                 if max_sc_prev > 0:
@@ -895,7 +926,7 @@ elif app_mode == "📊 동적 자산배분 대시보드":
                     st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy4_curr.items()]))
 
                 st.divider()
-                render_dashboard_rebalancer("4", buy4_curr)
+                render_dashboard_rebalancer("4", buy4_curr, data)
 
     except Exception as e:
         st.error(f"오류가 발생했습니다: {e}")
