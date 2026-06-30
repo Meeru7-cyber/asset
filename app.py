@@ -397,8 +397,9 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
                 {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "411060" in x), "직접 입력"), "현재가(원)": 13000, "목표비중(%)": 20.0, "보유수량(주)": 0}
             ])
             
+        # 오류 방지: required=True 제거
         column_config = {
-            "자산명 (선택)": st.column_config.SelectboxColumn("자산명 (클릭하여 전체 검색)", options=SEARCH_OPTIONS, width="large", required=True),
+            "자산명 (선택)": st.column_config.SelectboxColumn("자산명 (클릭하여 전체 검색)", options=SEARCH_OPTIONS, width="large"),
             "현재가(원)": st.column_config.NumberColumn("현재가(원)", format="%d"),
             "목표비중(%)": st.column_config.NumberColumn("목표비중(%)", min_value=0.0, max_value=100.0),
             "보유수량(주)": st.column_config.NumberColumn("보유수량(주)", min_value=0, format="%d")
@@ -464,16 +465,23 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
                 {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "308620" in x), ""), "투입비중(%)": 40.0}
             ])
             
+        # 오류 방지: required=True 제거, key 매개변수 제거
         bt_config = {
-            "자산명 (선택)": st.column_config.SelectboxColumn("자산명 (클릭하여 전체 검색)", options=SEARCH_OPTIONS, width="large", required=True),
+            "자산명 (선택)": st.column_config.SelectboxColumn("자산명 (클릭하여 전체 검색)", options=SEARCH_OPTIONS, width="large"),
             "투입비중(%)": st.column_config.NumberColumn("투입비중(%)", min_value=0.0, max_value=100.0)
         }
         
-        edited_bt = st.data_editor(st.session_state.bt_df, num_rows="dynamic", column_config=bt_config, use_container_width=True, key="bt_editor")
+        edited_bt = st.data_editor(st.session_state.bt_df, num_rows="dynamic", column_config=bt_config, use_container_width=True)
         st.session_state.bt_df = edited_bt
         
+        # 실시간 합계 출력 기능
+        total_bt_ratio = edited_bt["투입비중(%)"].fillna(0).sum()
+        if total_bt_ratio == 100:
+            st.success(f"✅ **투입 비중 합계: {total_bt_ratio:.1f}%** (설정 완료)")
+        else:
+            st.error(f"❌ **투입 비중 합계: {total_bt_ratio:.1f}%** (100%로 맞춰주세요!)")
+        
         if st.button("🚀 백테스트 실행", type="primary"):
-            total_bt_ratio = edited_bt["투입비중(%)"].sum()
             if total_bt_ratio != 100:
                 st.error(f"투입비중의 합이 100%가 아닙니다. (현재: {total_bt_ratio}%)")
             else:
@@ -482,7 +490,7 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
                     for idx, row in edited_bt.iterrows():
                         asset_str = row["자산명 (선택)"]
                         w = row["투입비중(%)"] / 100.0
-                        if asset_str and "(" in asset_str:
+                        if pd.notna(w) and asset_str and "(" in asset_str:
                             tkr = asset_str.split("(")[-1].replace(")", "").strip()
                             asset_weights[tkr] = asset_weights.get(tkr, 0) + w
                             
@@ -529,11 +537,15 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
                         st.divider()
                         st.subheader("📊 백테스트 분석 결과")
                         
-                        # [신규 추가] 실제 데이터 기반 연산 기간 표시
-                        actual_start = port_cum.index[0].strftime('%Y-%m-%d')
-                        actual_end = port_cum.index[-1].strftime('%Y-%m-%d')
-                        st.caption(f"🗓️ **실제 데이터 반영 기간:** `{actual_start}` ~ `{actual_end}`")
-                        st.write("") # 간격 띄우기
+                        # 실제 연산 적용 기간 (크고 뚜렷한 UI 박스로 변경)
+                        actual_start = port_cum.index[0].strftime('%Y년 %m월 %d일')
+                        actual_end = port_cum.index[-1].strftime('%Y년 %m월 %d일')
+                        st.markdown(f"""
+                        <div style="background-color: rgba(79,142,247,0.15); border-left: 5px solid #4f8ef7; padding: 16px 20px; border-radius: 8px; margin-bottom: 24px;">
+                            <span style="font-size: 1.1em; color: #e8eaf0; font-weight: 700;">🗓️ 실제 데이터 반영 백테스트 기간: </span>
+                            <span style="font-size: 1.25em; color: #4f8ef7; font-weight: 800; margin-left: 10px; letter-spacing: 0.5px;">{actual_start} &nbsp;➔&nbsp; {actual_end}</span>
+                        </div>
+                        """, unsafe_allow_html=True)
                         
                         m1, m2, m3 = st.columns(3)
                         m1.metric("연평균 수익률 (CAGR)", f"{p_cagr*100:.2f}%", f"SPY 벤치마크: {s_cagr*100:.2f}%")
