@@ -754,14 +754,14 @@ def render_dashboard_rebalancer(strat_id, buy_dict):
         st.dataframe(styled_df, use_container_width=True)
 
 
-elif app_mode == "📊 동적 자산배분 대시보드":
-    st.subheader("💡 동적 자산배분 실시간 리밸런싱 대시보드")
-    try:
-        with st.spinner('금융 시장 데이터를 실시간 동기화 중입니다...'):
-            data = load_financial_data(all_tickers)
-            unrate_data = load_fred_data()
-            
-        month_data = data.resample('ME').last()
+    elif app_mode == "📊 동적 자산배분 대시보드":
+        st.subheader("💡 동적 자산배분 실시간 리밸런싱 대시보드")
+        try:
+            with st.spinner('금융 시장 데이터를 실시간 동기화 중입니다...'):
+                data = load_financial_data(all_tickers)
+                unrate_data = load_fred_data()
+                
+            month_data = data.resample('ME').last()
         
         if len(month_data) < 14:
             st.error("데이터가 부족합니다. (최소 14개월 필요)")
