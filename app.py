@@ -35,15 +35,16 @@ if "budget_stock" not in st.session_state: st.session_state.budget_stock = "15,0
 if "budget_idx" not in st.session_state: st.session_state.budget_idx = "15,000,000"
 if "budget_asset" not in st.session_state: st.session_state.budget_asset = "100,000,000"
 
-# ROE/PBR 상태 초기화
-if "roe_pbr" not in st.session_state: st.session_state.roe_pbr = 1.20
-if "roe_value_3" not in st.session_state: st.session_state.roe_value_3 = 15.0
-if "roe_value_5" not in st.session_state: st.session_state.roe_value_5 = 15.0
-if "roe_value_10" not in st.session_state: st.session_state.roe_value_10 = 15.0
-if "roe_price" not in st.session_state: st.session_state.roe_price = 10000.0
+# ROE/PBR 실시간 연동을 위한 UI 상태 초기화
+if "ui_pbr" not in st.session_state: st.session_state.ui_pbr = 1.20
+if "ui_roe" not in st.session_state: st.session_state.ui_roe = 15.0
+if "ui_price" not in st.session_state: st.session_state.ui_price = 10000.0
+if "roe_val_3" not in st.session_state: st.session_state.roe_val_3 = 15.0
+if "roe_val_5" not in st.session_state: st.session_state.roe_val_5 = 15.0
+if "roe_val_10" not in st.session_state: st.session_state.roe_val_10 = 15.0
 
 # ==========================================
-# 🧭 공통 기능: CNN Fear & Greed & 전체 종목 검색
+# 🧭 공통 기능: CNN Fear & Greed & 전체 종목 검색 (미국 확장)
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_fear_and_greed():
@@ -71,25 +72,45 @@ def get_all_search_options():
         kosdaq_list = (kosdaq['Name'] + " (" + kosdaq['Code'] + ".KQ)").tolist()
         etf = fdr.StockListing('ETF/KR')
         etf_list = (etf['Name'] + " (" + etf['Symbol'] + ".KS)").tolist()
+        
         sp500 = fdr.StockListing('S&P500')
         sp500_list = (sp500['Name'] + " (" + sp500['Symbol'] + ")").tolist()
         nasdaq = fdr.StockListing('NASDAQ')
         nasdaq_list = (nasdaq['Name'] + " (" + nasdaq['Symbol'] + ")").tolist()
         nyse = fdr.StockListing('NYSE')
         nyse_list = (nyse['Name'] + " (" + nyse['Symbol'] + ")").tolist()
+        
         all_auto = list(set(kospi_list + kosdaq_list + etf_list + sp500_list + nasdaq_list + nyse_list))
     except:
         all_auto = ["삼성전자 (005930.KS)", "KODEX 200 (069500.KS)", "TIGER 미국나스닥100 (133690.KS)", "Apple (AAPL)"]
         
+    # 검색이 누락되기 쉬운 미국 주요 레버리지, 원자재, 지수 ETF 집중 추가
     us_etfs_and_commodities = [
-        "SPDR S&P 500 ETF (SPY)", "Invesco QQQ Trust (QQQ)", "Vanguard Total Stock Market (VTI)", 
+        # 지수 및 벤치마크 (VOO, QQQM 등 추가)
+        "SPDR S&P 500 ETF (SPY)", "Invesco QQQ Trust (QQQ)", "Vanguard S&P 500 ETF (VOO)", 
+        "Invesco NASDAQ 100 ETF (QQQM)", "Vanguard Total Stock Market (VTI)", "SPDR Dow Jones Industrial Average (DIA)", 
+        "iShares Russell 2000 (IWM)", "Vanguard Total World Stock (VT)",
+        # 채권
         "iShares 20+ Year Treasury Bond (TLT)", "iShares 7-10 Year Treasury Bond (IEF)", "iShares 1-3 Year Treasury Bond (SHY)", 
-        "SPDR Bloomberg 1-3 Month T-Bill (BIL)", "ProShares UltraPro QQQ (TQQQ)", "ProShares UltraPro Short QQQ (SQQQ)",
+        "SPDR Bloomberg 1-3 Month T-Bill (BIL)", "iShares Core US Aggregate Bond (AGG)", "iShares TIPS Bond ETF (TIP)",
+        # 레버리지 및 인버스 (QLD 등 추가)
+        "ProShares Ultra QQQ (QLD)", "ProShares UltraPro QQQ (TQQQ)", "ProShares UltraPro Short QQQ (SQQQ)",
         "Direxion Daily Semiconductor Bull 3X (SOXL)", "Direxion Daily Semiconductor Bear 3X (SOXS)",
-        "SPDR Gold Shares (GLD)", "Invesco DB Commodity Tracking (DBC)", "United States Oil Fund (USO)", 
+        "MicroSectors FANG+ Index 3X Leveraged (FNGU)", "MicroSectors FANG+ Index -3X Inverse (FNGD)",
+        "MicroSectors FANG & Innovation 3X Leveraged (BULZ)", "ProShares UltraPro S&P500 (UPRO)",
+        "Direxion Daily 20+ Year Treasury Bull 3X (TMF)", "Direxion Daily 20+ Year Treasury Bear 3X (TMV)",
+        "GraniteShares 2x Long NVDA Daily (NVDL)", "Direxion Daily TSLA Bull 2X Shares (TSLL)",
+        # 원자재 및 금속
+        "SPDR Gold Shares (GLD)", "iShares Gold Trust (IAU)", "iShares Silver Trust (SLV)", 
+        "Invesco DB Commodity Tracking (DBC)", "United States Oil Fund (USO)", "ProShares Ultra Bloomberg Natural Gas (BOIL)",
+        "Global X Copper Miners ETF (COPX)", "Global X Lithium & Battery Tech ETF (LIT)", "Global X Uranium ETF (URA)",
+        # 섹터 및 테마
         "Technology Select Sector SPDR (XLK)", "Health Care Select Sector SPDR (XLV)", "Financial Select Sector SPDR (XLF)", 
-        "iShares Semiconductor ETF (SOXX)", "VanEck Semiconductor ETF (SMH)"
+        "Energy Select Sector SPDR (XLE)", "Vanguard Real Estate Index Fund (VNQ)", "iShares Semiconductor ETF (SOXX)", 
+        "VanEck Semiconductor ETF (SMH)", "iShares Biotechnology ETF (IBB)", "First Trust Cloud Computing (SKYY)", 
+        "Schwab US Dividend Equity ETF (SCHD)", "iShares Russell 1000 Value ETF (IWD)", "Vanguard FTSE Emerging Markets (VWO)"
     ]
+    
     combined = list(set(all_auto + us_etfs_and_commodities))
     return ["직접 입력 (여기에 없는 종목)"] + sorted(combined)
 
@@ -247,11 +268,11 @@ def get_aaa_score(series, idx=-1):
 
 
 # ==========================================
-# [모드 1] 🧮 프라이빗 투자 계산기 
+# [모드 1] 🧮 프라이빗 투자 계산기
 # ==========================================
 if app_mode == "🧮 프라이빗 투자 계산기":
     
-    with st.spinner("글로벌 종목 데이터를 동기화 중입니다..."):
+    with st.spinner("미국 및 한국의 글로벌 종목 데이터를 동기화 중입니다..."):
         SEARCH_OPTIONS = get_all_search_options()
     
     tab_stock, tab_idx, tab_asset, tab_backtest, tab_roe = st.tabs([
@@ -566,19 +587,35 @@ if app_mode == "🧮 프라이빗 투자 계산기":
     # --- 5. 기대수익률 (ROE/PBR) 스마트 가치평가 ---
     with tab_roe:
         st.write("📊 **기업 가치 및 연평균 기대수익률(R) 스마트 연산기**")
-        st.info("💡 종목을 검색하고 '재무 데이터 자동 연동'을 누르면 최근 재무 데이터를 기반으로 **정확한 현재 PBR과 3/5/10년 평균 ROE, 주가**를 긁어옵니다.")
+        st.info("💡 종목을 검색하고 '데이터 연동' 버튼을 누르면 최근 3년 재무 데이터를 기반으로 **현재 PBR, 최근 평균 ROE, 주가**를 긁어옵니다.")
         
-        # 콜백을 사용한 데이터 강제 연동
+        # 콜백을 사용한 데이터 강제 연동 (key를 통한 세션 상태 직접 업데이트)
         def fetch_roe_data():
             sel = st.session_state.get("roe_search_box", "")
             if sel and "직접 입력" not in sel:
                 tkr = sel.split("(")[-1].replace(")", "").strip()
                 pbr_v, roe3, roe5, roe10, price_v = get_pbr_roe_price(tkr)
-                st.session_state.roe_pbr = round(pbr_v, 2) if pbr_v > 0 else 1.0
-                st.session_state.roe_value_3 = round(roe3, 2)
-                st.session_state.roe_value_5 = round(roe5, 2)
-                st.session_state.roe_value_10 = round(roe10, 2)
-                st.session_state.roe_price = price_v
+                
+                # 내부 연산용 데이터 저장
+                st.session_state.roe_val_3 = round(roe3, 2)
+                st.session_state.roe_val_5 = round(roe5, 2)
+                st.session_state.roe_val_10 = round(roe10, 2)
+                
+                # UI 위젯 직접 업데이트
+                st.session_state.ui_pbr = round(pbr_v, 2) if pbr_v > 0 else 1.0
+                st.session_state.ui_price = float(price_v)
+                
+                # 현재 선택된 드롭다운에 맞춰 UI_ROE 업데이트
+                period = st.session_state.get("roe_period_box", "3년 평균 ROE")
+                if period == "3년 평균 ROE": st.session_state.ui_roe = st.session_state.roe_val_3
+                elif period == "5년 평균 ROE": st.session_state.ui_roe = st.session_state.roe_val_5
+                else: st.session_state.ui_roe = st.session_state.roe_val_10
+                
+        def update_roe_from_period():
+            period = st.session_state.get("roe_period_box", "3년 평균 ROE")
+            if period == "3년 평균 ROE": st.session_state.ui_roe = st.session_state.get("roe_val_3", 15.0)
+            elif period == "5년 평균 ROE": st.session_state.ui_roe = st.session_state.get("roe_val_5", 15.0)
+            else: st.session_state.ui_roe = st.session_state.get("roe_val_10", 15.0)
         
         sc1, sc2 = st.columns([3, 1])
         with sc1:
@@ -590,17 +627,11 @@ if app_mode == "🧮 프라이빗 투자 계산기":
         st.divider()
         
         r1, r2, r3, r4 = st.columns(4)
-        pbr = r1.number_input("현재 PBR (주가순자산비율)", value=st.session_state.roe_pbr, step=0.01)
-        
-        # ROE 기간 선택
-        roe_period = r2.selectbox("적용 ROE 기준 선택", ["3년 평균 ROE", "5년 평균 ROE", "10년 평균 ROE"])
-        if roe_period == "3년 평균 ROE": active_roe = st.session_state.roe_value_3
-        elif roe_period == "5년 평균 ROE": active_roe = st.session_state.roe_value_5
-        else: active_roe = st.session_state.roe_value_10
-        
-        roe = r2.number_input(f"해당 {roe_period} (%)", value=active_roe, step=0.1)
+        pbr = r1.number_input("현재 PBR (주가순자산비율)", step=0.01, key="ui_pbr")
+        roe_period = r2.selectbox("적용 ROE 기준 선택", ["3년 평균 ROE", "5년 평균 ROE", "10년 평균 ROE"], key="roe_period_box", on_change=update_roe_from_period)
+        roe = r2.number_input("해당 평균 ROE (%)", step=0.1, key="ui_roe")
         n_years = r3.number_input("가치평가 기준 연수 (N년)", value=10, step=1)
-        curr_price = r4.number_input("현재 주가 (참고용)", value=float(st.session_state.roe_price), step=100.0)
+        curr_price = r4.number_input("현재 주가 (참고용)", step=100.0, key="ui_price")
         
         if pbr > 0 and n_years > 0:
             # 1. 10년 후 가치 = BPS * (1+ROE)^n
@@ -632,7 +663,7 @@ if app_mode == "🧮 프라이빗 투자 계산기":
             if curr_price > 0 and bps > 0:
                 discount_rate = (target_buy_price / curr_price - 1) * 100
                 
-                # 완전 검정색 및 두꺼운 폰트를 적용한 고대비 화이트 테마 박스
+                # 완전 검정색 및 두꺼운 폰트를 적용한 고대비 테마 박스
                 st.markdown(f"""
                 <div style="background-color: #f8f9fa; border-left: 6px solid #2ecc71; padding: 20px 24px; border-radius: 8px; margin-top: 10px; border-top: 1px solid #e0e0e0; border-right: 1px solid #e0e0e0; border-bottom: 1px solid #e0e0e0;">
                     <span style="font-size: 1.1em; color: #000000; font-weight: 700;">💡 연 15% 복리 수익률을 확보하기 위한 <span style="color:#1e8449;">최대 목표 매수가</span>:</span><br>
@@ -641,7 +672,7 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                 </div>
                 """, unsafe_allow_html=True)
 
-            # 5. 투자 시 우려되는 점 자동 분석 (사용자 룰 반영)
+            # 5. 투자 시 우려되는 점 자동 분석
             risks = []
             if pbr >= 3.0: risks.append("⚠️ **고평가 우려:** 현재 PBR이 3배 이상으로 자산 대비 주가 프리미엄이 높게 형성되어 있습니다.")
             if roe < 10.0: risks.append("⚠️ **수익성 부족:** 장기 평균 ROE가 10% 미만으로 자본 효율성이 다소 떨어지는 추세입니다.")
@@ -758,7 +789,7 @@ footer_html = """
 <div style='text-align: center; color: #8b90a8; font-size: 0.85em; padding: 20px 0; line-height: 1.6;'>
     <strong>⚖️ 법적 고지 및 면책사항 (Disclaimer)</strong><br>
     본 웹사이트(플랫폼)에서 제공하는 모든 정보, 데이터, 연산 결과는 투자 결정의 참고 용도로만 제공되며, 그 정확성이나 완전성을 보장하지 않습니다.<br>
-    야후 파이낸스(Yahoo Finance), FRED, CNN Fear & Greed 등 외부 통신망에서 제공되는 실시간 데이터는 시스템 환경에 따라 지연되거나 오류가 발생할 수 있습니다.<br>
+    야후 파이낸스(Yahoo Finance), FRED, Naver, CNN Fear & Greed 등 외부 통신망에서 제공되는 실시간 데이터는 시스템 환경에 따라 지연되거나 오류가 발생할 수 있습니다.<br>
     본 플랫폼의 제작 및 제공자는 사용자의 투자 결과에 대해 어떠한 법적, 도의적 책임도 지지 않습니다.<br> 
     <strong>모든 최종 투자 판단과 그에 따른 책임은 투자자 본인에게 있습니다.</strong>
 </div>
