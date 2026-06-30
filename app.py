@@ -34,6 +34,9 @@ def format_number_str(key):
 if "budget_stock" not in st.session_state: st.session_state.budget_stock = "15,000,000"
 if "budget_idx" not in st.session_state: st.session_state.budget_idx = "15,000,000"
 if "budget_asset" not in st.session_state: st.session_state.budget_asset = "100,000,000"
+if "roe_pbr" not in st.session_state: st.session_state.roe_pbr = 1.20
+if "roe_value" not in st.session_state: st.session_state.roe_value = 15.0
+if "roe_price" not in st.session_state: st.session_state.roe_price = 10000.0
 
 # ==========================================
 # 🧭 공통 기능: CNN Fear & Greed & 전체 종목 검색 (미국 확장)
@@ -57,25 +60,18 @@ def get_fear_and_greed():
 
 @st.cache_data(ttl=86400)
 def get_all_search_options():
-    """한국거래소 및 미국(S&P500, NASDAQ, NYSE) 전체 종목 + 주요 ETF/원자재 통합"""
     try:
-        # 한국 시장
         kospi = fdr.StockListing('KOSPI')
         kospi_list = (kospi['Name'] + " (" + kospi['Code'] + ".KS)").tolist()
-        
         kosdaq = fdr.StockListing('KOSDAQ')
         kosdaq_list = (kosdaq['Name'] + " (" + kosdaq['Code'] + ".KQ)").tolist()
-        
         etf = fdr.StockListing('ETF/KR')
         etf_list = (etf['Name'] + " (" + etf['Symbol'] + ".KS)").tolist()
         
-        # 미국 시장
         sp500 = fdr.StockListing('S&P500')
         sp500_list = (sp500['Name'] + " (" + sp500['Symbol'] + ")").tolist()
-        
         nasdaq = fdr.StockListing('NASDAQ')
         nasdaq_list = (nasdaq['Name'] + " (" + nasdaq['Symbol'] + ")").tolist()
-        
         nyse = fdr.StockListing('NYSE')
         nyse_list = (nyse['Name'] + " (" + nyse['Symbol'] + ")").tolist()
         
@@ -83,26 +79,30 @@ def get_all_search_options():
     except:
         all_auto = ["삼성전자 (005930.KS)", "KODEX 200 (069500.KS)", "TIGER 미국나스닥100 (133690.KS)", "Apple (AAPL)"]
         
-    # 검색이 어려운 주요 미국 원자재, 지수, 채권, 섹터 ETF 수동 보완 세팅
+    # 검색이 누락되기 쉬운 미국 주요 레버리지, 원자재, 지수 ETF 집중 추가
     us_etfs_and_commodities = [
-        # 대표 지수
+        # 지수 및 벤치마크
         "SPDR S&P 500 ETF (SPY)", "Invesco QQQ Trust (QQQ)", "Vanguard Total Stock Market (VTI)", 
         "SPDR Dow Jones Industrial Average (DIA)", "iShares Russell 2000 (IWM)", "Vanguard Total World Stock (VT)",
         # 채권
         "iShares 20+ Year Treasury Bond (TLT)", "iShares 7-10 Year Treasury Bond (IEF)", "iShares 1-3 Year Treasury Bond (SHY)", 
         "SPDR Bloomberg 1-3 Month T-Bill (BIL)", "iShares Core US Aggregate Bond (AGG)", "iShares TIPS Bond ETF (TIP)",
-        # 원자재 & 금속
+        # 레버리지 및 인버스 (신규 추가)
+        "ProShares UltraPro QQQ (TQQQ)", "ProShares UltraPro Short QQQ (SQQQ)",
+        "Direxion Daily Semiconductor Bull 3X (SOXL)", "Direxion Daily Semiconductor Bear 3X (SOXS)",
+        "MicroSectors FANG+ Index 3X Leveraged (FNGU)", "MicroSectors FANG+ Index -3X Inverse (FNGD)",
+        "MicroSectors FANG & Innovation 3X Leveraged (BULZ)", "ProShares UltraPro S&P500 (UPRO)",
+        "Direxion Daily 20+ Year Treasury Bull 3X (TMF)", "Direxion Daily 20+ Year Treasury Bear 3X (TMV)",
+        "GraniteShares 2x Long NVDA Daily (NVDL)", "Direxion Daily TSLA Bull 2X Shares (TSLL)",
+        # 원자재 및 금속
         "SPDR Gold Shares (GLD)", "iShares Gold Trust (IAU)", "iShares Silver Trust (SLV)", 
-        "Invesco DB Commodity Index Tracking Fund (DBC)", "United States Oil Fund (USO)", "Invesco DB Agriculture Fund (DBA)",
+        "Invesco DB Commodity Tracking (DBC)", "United States Oil Fund (USO)", "ProShares Ultra Bloomberg Natural Gas (BOIL)",
         "Global X Copper Miners ETF (COPX)", "Global X Lithium & Battery Tech ETF (LIT)", "Global X Uranium ETF (URA)",
         # 섹터 및 테마
-        "Technology Select Sector SPDR Fund (XLK)", "Health Care Select Sector SPDR Fund (XLV)", "Financial Select Sector SPDR Fund (XLF)", 
-        "Energy Select Sector SPDR Fund (XLE)", "Vanguard Real Estate Index Fund (VNQ)", "iShares Semiconductor ETF (SOXX)", 
-        "VanEck Semiconductor ETF (SMH)", "iShares Biotechnology ETF (IBB)", "iShares Expanded Tech-Software Sector ETF (IGV)",
-        "First Trust Cloud Computing ETF (SKYY)", "SPDR S&P Retail ETF (XRT)", "Schwab US Dividend Equity ETF (SCHD)",
-        "iShares Russell 1000 Value ETF (IWD)", "iShares Russell 1000 Growth ETF (IWF)",
-        # 글로벌 (미국 외)
-        "Vanguard FTSE Developed Markets ETF (VEA)", "Vanguard FTSE Emerging Markets ETF (VWO)", "iShares MSCI EAFE ETF (EFA)"
+        "Technology Select Sector SPDR (XLK)", "Health Care Select Sector SPDR (XLV)", "Financial Select Sector SPDR (XLF)", 
+        "Energy Select Sector SPDR (XLE)", "Vanguard Real Estate Index Fund (VNQ)", "iShares Semiconductor ETF (SOXX)", 
+        "VanEck Semiconductor ETF (SMH)", "iShares Biotechnology ETF (IBB)", "First Trust Cloud Computing (SKYY)", 
+        "Schwab US Dividend Equity ETF (SCHD)", "iShares Russell 1000 Value ETF (IWD)", "Vanguard FTSE Emerging Markets (VWO)"
     ]
     
     combined = list(set(all_auto + us_etfs_and_commodities))
@@ -121,11 +121,60 @@ def get_stock_info(ticker):
     except:
         return 0.0, 0.0
 
+@st.cache_data(ttl=3600)
+def get_pbr_roe_price(ticker):
+    """현재 PBR, 최근 3년 평균 ROE, 현재 주가를 모두 추출"""
+    if not ticker or "직접 입력" in ticker: return 0.0, 0.0, 0.0
+    try:
+        t = yf.Ticker(ticker)
+        info = t.info
+        
+        # 1. 현재 주가 추출
+        hist = t.history(period="1d")
+        price = float(hist['Close'].iloc[-1]) if not hist.empty else 0.0
+        
+        # 2. PBR 추출
+        pbr = info.get('priceToBook', 0)
+        if not pbr or pbr == 0: pbr = 1.0 # PBR 누락 시 기본값 1.0 처리
+        
+        # 3. 3년 평균 ROE 연산 (재무제표 접근)
+        try:
+            inc = t.financials
+            bs = t.balance_sheet
+            ni_keys = ['Net Income', 'NetIncome', 'Net Income Common Stockholders']
+            eq_keys = ['Stockholders Equity', 'Total Stockholder Equity', 'Total Equity Gross Minority Interest']
+            
+            ni_row, eq_row = None, None
+            for k in ni_keys:
+                if k in inc.index: ni_row = inc.loc[k]; break
+            for k in eq_keys:
+                if k in bs.index: eq_row = bs.loc[k]; break
+                    
+            if ni_row is not None and eq_row is not None:
+                roes = []
+                for date in ni_row.index[:3]: # 최근 3개 연도 순회
+                    if date in eq_row.index:
+                        ni_val = ni_row[date]
+                        eq_val = eq_row[date]
+                        if pd.notna(ni_val) and pd.notna(eq_val) and eq_val > 0:
+                            roes.append(ni_val / eq_val)
+                avg_roe = sum(roes) / len(roes) if len(roes) > 0 else info.get('returnOnEquity', 0.0)
+            else:
+                avg_roe = info.get('returnOnEquity', 0.0)
+        except:
+            avg_roe = info.get('returnOnEquity', 0.0)
+            
+        if avg_roe is None: avg_roe = 0.0
+        
+        return float(pbr), float(avg_roe) * 100, float(price)
+    except:
+        return 0.0, 0.0, 0.0
+
 # ==========================================
 # 🎨 메인 타이틀 및 F&G 배너
 # ==========================================
 st.markdown("<h1 style='text-align: center;'>📊 프라이빗 투자 플랫폼</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center; color: #8b90a8; margin-top: -10px; margin-bottom: 30px;'>개인 투자자를 위한 맞춤형 계산기 및 자산배분 대시보드</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: #8b90a8; margin-top: -10px; margin-bottom: 30px;'>물타기 · 지수분할 · 가치평가 모델링 · 자산배분 및 백테스트 통합 엔진</p>", unsafe_allow_html=True)
 
 fng_score, fng_rating = get_fear_and_greed()
 
@@ -156,10 +205,9 @@ st.markdown(banner_html, unsafe_allow_html=True)
 
 
 # ==========================================
-# 🧭 사이드바 설정 (메뉴 순서 변경)
+# 🧭 사이드바 설정 (메뉴 순서 변경 적용)
 # ==========================================
 st.sidebar.title("네비게이션")
-# 프라이빗 투자 계산기를 상단(기본 선택)으로 이동
 app_mode = st.sidebar.radio("원하시는 기능을 선택하세요:", ["🧮 프라이빗 투자 계산기", "📊 동적 자산배분 대시보드"])
 st.sidebar.caption("데이터 제공: Yahoo Finance, FRED, CNN")
 
@@ -203,11 +251,11 @@ def get_aaa_score(series, idx=-1):
 
 
 # ==========================================
-# [모드 1] 🧮 프라이빗 투자 계산기 (위로 이동됨)
+# [모드 1] 🧮 프라이빗 투자 계산기 (우선 진입)
 # ==========================================
 if app_mode == "🧮 프라이빗 투자 계산기":
     
-    with st.spinner("미국 및 한국의 모든 종목 및 원자재 데이터를 동기화 중입니다..."):
+    with st.spinner("미국 및 한국의 글로벌 종목 데이터를 동기화 중입니다..."):
         SEARCH_OPTIONS = get_all_search_options()
     
     tab_stock, tab_idx, tab_asset, tab_backtest, tab_roe = st.tabs([
@@ -217,14 +265,13 @@ if app_mode == "🧮 프라이빗 투자 계산기":
     # --- 1. 개별종목 물타기 ---
     with tab_stock:
         st.write("개별종목 분할매수 스케줄 계산")
-        
         st.info("💡 **안내:** 검색 후 종목의 현재가나 배당금이 외부 사정으로 인해 자동으로 나오지 않는다면, 직접 **수동으로 입력해 주세요.**")
         
-        selected_stock = st.selectbox("🔍 종목 검색 (한국 및 미국 전 종목/원자재/ETF 동시 검색)", options=SEARCH_OPTIONS, index=1)
+        selected_stock = st.selectbox("🔍 종목 검색 (한국 및 미국 전 종목/원자재/레버리지 ETF 동시 검색)", options=SEARCH_OPTIONS, index=1)
         
         stock_ticker = ""
         if selected_stock == "직접 입력 (여기에 없는 종목)":
-            stock_ticker = st.text_input("종목 코드 직접 입력 (예: 005930.KS, AAPL)")
+            stock_ticker = st.text_input("종목 코드 직접 입력 (예: 005930.KS, TQQQ)")
         else:
             stock_ticker = selected_stock.split("(")[-1].replace(")", "").strip()
             
@@ -520,25 +567,74 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                     except Exception as e:
                         st.error(f"백테스트 진행 중 오류가 발생했습니다. 종목 코드나 날짜 범위를 다시 확인해주세요. (사유: {e})")
 
-    # --- 5. 기대수익률 (ROE/PBR) ---
+    # --- 5. 기대수익률 (ROE/PBR) 스마트 가치평가 ---
     with tab_roe:
-        st.write("연평균 기대수익률(R) 역산 도출")
-        st.latex(r"R = \frac{1 + ROE}{PBR^{\frac{1}{n}}} - 1")
+        st.write("📊 **기업 가치 및 연평균 기대수익률(R) 스마트 연산기**")
+        st.info("💡 종목을 검색하고 '데이터 연동' 버튼을 누르면 최근 3년 재무 데이터를 기반으로 **현재 PBR, 최근 3년 평균 ROE, 주가**를 긁어옵니다.")
         
-        r1, r2, r3 = st.columns(3)
-        pbr = r1.number_input("PBR (주가순자산비율)", value=1.20, step=0.01)
-        roe = r2.number_input("ROE (%)", value=15.0, step=0.1)
-        n_years = r3.number_input("투자 기간 (N년)", value=10, step=1)
+        # 콜백을 사용한 데이터 강제 연동
+        def fetch_roe_data():
+            sel = st.session_state.get("roe_search_box", "")
+            if sel and "직접 입력" not in sel:
+                tkr = sel.split("(")[-1].replace(")", "").strip()
+                pbr_v, roe_v, price_v = get_pbr_roe_price(tkr)
+                st.session_state.roe_pbr = round(pbr_v, 2) if pbr_v > 0 else 1.0
+                st.session_state.roe_value = round(roe_v, 2) if roe_v != 0 else 0.0
+                st.session_state.roe_price = price_v
+        
+        sc1, sc2 = st.columns([3, 1])
+        with sc1:
+            st.selectbox("🔍 분석할 종목 검색", options=SEARCH_OPTIONS, key="roe_search_box")
+        with sc2:
+            st.write("") # 세로 정렬
+            st.button("🔄 재무 데이터 자동 연동", on_click=fetch_roe_data, use_container_width=True)
+
+        st.divider()
+        
+        r1, r2, r3, r4 = st.columns(4)
+        pbr = r1.number_input("현재 PBR (주가순자산비율)", value=st.session_state.roe_pbr, step=0.01)
+        roe = r2.number_input("평균 ROE (%)", value=st.session_state.roe_value, step=0.1)
+        n_years = r3.number_input("가치평가 기준 연수 (N년)", value=10, step=1)
+        curr_price = r4.number_input("현재 주가 (참고용)", value=float(st.session_state.roe_price), step=100.0)
         
         if pbr > 0 and n_years > 0:
+            # 1. 10년 후 가치 (BPS * (1+ROE)^n) - 현재 BPS는 주가/PBR로 역산
+            bps = curr_price / pbr if curr_price > 0 else 0
+            future_value = bps * ((1 + (roe/100)) ** n_years)
+            
+            # 2. 가치 승수 (미래 가치 / 현재가)
+            value_multiplier = ((1 + (roe/100)) ** n_years) / pbr
+            
+            # 3. 연평균 기대수익률 (CAGR)
             exp_return = (((1 + (roe/100)) / (pbr ** (1/n_years))) - 1) * 100
-            if exp_return >= 15:
-                st.success(f"🎉 **도출된 연평균 기대수익률:** {exp_return:.2f}% (우수)")
-            else:
-                st.info(f"📊 **도출된 연평균 기대수익률:** {exp_return:.2f}%")
+            
+            # 4. 기대수익률 15% 이상을 위한 목표 매수가
+            target_buy_price = future_value / ((1 + 0.15) ** n_years)
+            
+            # 출력 렌더링
+            st.markdown("### 🎯 **핵심 가치평가 분석 리포트**")
+            
+            res_c1, res_c2, res_c3 = st.columns(3)
+            with res_c1:
+                st.metric(f"📈 도출된 연평균 기대수익률", f"{exp_return:.2f}%")
+            with res_c2:
+                st.metric(f"🚀 {n_years}년 가치 승수", f"{value_multiplier:.2f} 배")
+            with res_c3:
+                st.metric(f"🔮 {n_years}년 후 예상 적정 가치", f"{future_value:,.0f}" if bps > 0 else "주가 입력 필요")
+            
+            if curr_price > 0 and bps > 0:
+                discount_rate = (target_buy_price / curr_price - 1) * 100
+                st.markdown(f"""
+                <div style="background-color: rgba(46,204,113,0.12); border-left: 5px solid #2ecc71; padding: 18px 24px; border-radius: 8px; margin-top: 10px;">
+                    <span style="font-size: 1.0em; color: #e8eaf0; font-weight: 700;">💡 연 15% 복리 수익률을 확보하기 위한 <span style="color:#2ecc71;">최대 목표 매수가</span>:</span><br>
+                    <span style="font-size: 1.4em; color: #2ecc71; font-weight: 800; letter-spacing: 0.5px;">{target_buy_price:,.0f} 원</span>
+                    <span style="font-size: 0.9em; color: #8b90a8; margin-left: 10px;">(현재 주가 대비 {discount_rate:+.1f}%)</span>
+                </div>
+                """, unsafe_allow_html=True)
+
 
 # ==========================================
-# [모드 2] 📊 동적 자산배분 대시보드 (아래로 이동됨)
+# [모드 2] 📊 동적 자산배분 대시보드
 # ==========================================
 elif app_mode == "📊 동적 자산배분 대시보드":
     st.subheader("💡 동적 자산배분 실시간 리밸런싱 대시보드")
