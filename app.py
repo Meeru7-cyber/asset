@@ -13,7 +13,7 @@ import FinanceDataReader as fdr
 def check_password():
     """비밀번호 인증을 위한 함수"""
     def password_entered():
-        if st.session_state["password"] == "1234":  # 여기에 원하시는 비번을 입력하세요
+        if st.session_state["password"] == "54322":  # 여기에 원하시는 비번을 입력하세요
             st.session_state["password_correct"] = True
             del st.session_state["password"]  # 비번 저장 안되게 삭제
         else:
