@@ -19,23 +19,27 @@ yf_session.headers.update({
 })
 
 # ==========================================
-# 🧭 금액 콤마 처리용 안전 변환 함수 & 콜백
+# 🧭 금액 콤마 처리용 안전 변환 함수 & 콜백 (달러 소수점 지원)
 # ==========================================
-def safe_int(val):
+def safe_float(val):
     if isinstance(val, str):
         val = val.replace(",", "").strip()
     try:
-        return int(float(val))
+        return float(val)
     except:
-        return 0
+        return 0.0
 
 def format_number_str(key):
     val = str(st.session_state[key]).replace(",", "").strip()
     try:
         if val == "": 
             st.session_state[key] = "0"
-        else: 
-            st.session_state[key] = f"{int(float(val)):,}"
+        else:
+            f_val = float(val)
+            if f_val.is_integer():
+                st.session_state[key] = f"{int(f_val):,}"
+            else:
+                st.session_state[key] = f"{f_val:,.2f}"
     except ValueError:
         st.session_state[key] = "0"
 
@@ -55,10 +59,9 @@ if "roe_val_5" not in st.session_state: st.session_state.roe_val_5 = 15.0
 if "roe_val_10" not in st.session_state: st.session_state.roe_val_10 = 15.0
 
 # ==========================================
-# 🧭 DART 재무제표 파일 파싱 함수 (BPS, ROE 정밀 추출)
+# 🧭 DART 재무제표 파일 파싱 함수
 # ==========================================
 def parse_dart_files(files, comp_name):
-    """업로드된 DART txt 파일에서 자본총계와 당기순이익 추출"""
     eq = [0.0, 0.0, 0.0]
     ni = [0.0, 0.0, 0.0]
     
@@ -67,43 +70,52 @@ def parse_dart_files(files, comp_name):
             v = str(val).replace(',', '').strip()
             if v == '-' or v == '': return 0.0
             return float(v)
-        except:
-            return 0.0
+        except: return 0.0
 
     for f in files:
         f.seek(0)
-        try:
-            df = pd.read_csv(f, sep='\t', encoding='utf-8')
+        try: df = pd.read_csv(f, sep='\t', encoding='utf-8')
         except:
             f.seek(0)
-            try:
-                df = pd.read_csv(f, sep='\t', encoding='cp949')
-            except:
-                continue
+            try: df = pd.read_csv(f, sep='\t', encoding='cp949')
+            except: continue
 
-        if '회사명' not in df.columns or '항목명' not in df.columns:
-            continue
-
+        if '회사명' not in df.columns or '항목명' not in df.columns: continue
         cdf = df[df['회사명'].astype(str).str.contains(comp_name, na=False)]
         if cdf.empty: continue
 
         eq_rows = cdf[cdf['항목명'].astype(str).str.contains('자본총계', na=False)]
         if not eq_rows.empty:
             for i, col in enumerate(['당기', '전기', '전전기']):
-                if col in eq_rows.columns:
-                    eq[i] = to_float(eq_rows.iloc[0][col])
+                if col in eq_rows.columns: eq[i] = to_float(eq_rows.iloc[0][col])
 
         ni_rows = cdf[cdf['항목명'].astype(str).str.contains('당기순이익', na=False)]
         if not ni_rows.empty:
             for i, col in enumerate(['당기', '전기', '전전기']):
-                if col in ni_rows.columns:
-                    ni[i] = to_float(ni_rows.iloc[0][col])
+                if col in ni_rows.columns: ni[i] = to_float(ni_rows.iloc[0][col])
                     
     return eq, ni
 
 # ==========================================
-# 🧭 공통 기능: 데이터 로더
+# 🧭 공통 기능: 데이터 로더 및 통화 감지
 # ==========================================
+@st.cache_data(ttl=3600)
+def get_exchange_rate():
+    """실시간 원/달러 환율 추출"""
+    try:
+        t = yf.Ticker("KRW=X", session=yf_session)
+        price = float(t.history(period="1d")['Close'].iloc[-1])
+        return price if price > 500 else 1350.0
+    except:
+        return 1350.0
+
+def detect_currency(ticker):
+    """티커를 기반으로 국가/통화를 자동 인식"""
+    if not ticker or "직접 입력" in ticker: return "KRW"
+    if ticker.endswith('.KS') or ticker.endswith('.KQ'): return "KRW"
+    if ticker.isalpha(): return "USD"
+    return "KRW"
+
 @st.cache_data(ttl=3600)
 def get_fear_and_greed():
     try:
@@ -132,7 +144,7 @@ def get_all_search_options():
         nyse_list = (nyse['Name'] + " (" + nyse['Symbol'] + ")").tolist()
         all_auto = list(set(kospi_list + kosdaq_list + etf_list + sp500_list + nasdaq_list + nyse_list))
     except:
-        all_auto = ["삼성전자 (005930.KS)", "KODEX 200 (069500.KS)"]
+        all_auto = ["삼성전자 (005930.KS)", "KODEX 200 (069500.KS)", "ACE KRX금현물 (411060.KS)"]
         
     us_etfs_and_commodities = [
         "SPDR S&P 500 ETF (SPY)", "Invesco QQQ Trust (QQQ)", "Vanguard S&P 500 ETF (VOO)", "Invesco NASDAQ 100 ETF (QQQM)",
@@ -153,14 +165,12 @@ def get_stock_info(ticker):
     price = 0.0
     dividend = 0.0
     
-    # 한국 주식은 네이버 금융에서 1차적으로 강제 추출 (정확도 확보)
     if ticker.endswith('.KS') or ticker.endswith('.KQ'):
         code = ticker.split('.')[0]
         try:
             res = requests.get(f"https://m.stock.naver.com/api/stock/{code}/basic", headers=yf_session.headers, timeout=3)
             if res.status_code == 200:
-                data = res.json()
-                price = float(data['result']['closePrice'].replace(',', ''))
+                price = float(res.json()['result']['closePrice'].replace(',', ''))
         except: pass
         
     try:
@@ -170,12 +180,15 @@ def get_stock_info(ticker):
             if not hist.empty:
                 price = float(hist['Close'].iloc[-1])
         info = t.info
-        dividend = info.get('dividendRate', info.get('trailingAnnualDividendRate', 0.0))
-        if dividend is None: dividend = 0.0
+        # 배당금 조회 개선 (누락 시 0.0으로 안전하게 반환)
+        div = info.get('dividendRate')
+        if div is None:
+            div = info.get('trailingAnnualDividendRate', 0.0)
+        dividend = float(div) if div is not None else 0.0
     except:
         pass
         
-    return price, float(dividend)
+    return price, dividend
 
 @st.cache_data(ttl=3600)
 def get_pbr_roe_price(ticker):
@@ -234,11 +247,9 @@ def get_pbr_roe_price(ticker):
 
 @st.cache_data(ttl=14400)
 def load_financial_data(tickers):
-    """휴장일 차이로 인한 결측치를 ffill()로 보정하여 누락(0원) 방지"""
     start_date = (datetime.date.today() - datetime.timedelta(days=730)).strftime('%Y-%m-%d')
     df = yf.download(tickers, start=start_date, session=yf_session)
-    if 'Close' in df.columns: 
-        df = df['Close']
+    if 'Close' in df.columns: df = df['Close']
     return df.ffill().dropna(how='all')
 
 @st.cache_data(ttl=14400)
@@ -257,22 +268,18 @@ def get_aaa_score(series, idx=-1):
 # 🧮 대시보드 리밸런싱 렌더링 함수
 # ==========================================
 def render_dashboard_rebalancer(strat_id, buy_dict, data_df):
-    """현재가 조회 버그가 완벽하게 수정된 대시보드 리밸런서"""
     st.write("#### 🧮 전략 맞춤형 실시간 리밸런싱 계산기")
     
     b_col1, b_col2 = st.columns([1, 3])
     budget_key = f"budget_dash{strat_id}"
     budget_str = b_col1.text_input("총 투자 운용 금액 (원)", key=budget_key, on_change=format_number_str, args=(budget_key,))
-    budget = safe_int(budget_str)
+    budget = safe_float(budget_str)
     
     df_list = []
     for tkr, w in buy_dict.items():
         price = 0.0
-        # 1차: 불러와진 데이터셋에서 가장 정확한 최근 종가 추출
         if tkr in data_df.columns:
             price = float(data_df[tkr].iloc[-1])
-        
-        # 2차: 혹시라도 누락되었다면 야후/네이버에서 재검색
         if price == 0.0 or pd.isna(price):
             price, _ = get_stock_info(tkr)
             
@@ -287,14 +294,11 @@ def render_dashboard_rebalancer(strat_id, buy_dict, data_df):
         
     if df_list:
         base_df = pd.DataFrame(df_list)
-        st.caption("💡 **안내:** 현재 계좌에 보유 중인 수량을 **[보유수량(주)]** 칸에 직접 입력하셔야 정확한 '살 종목수(추가매수/매도)'가 연산됩니다. (현재가가 다를 경우 표 안에서 직접 수정 가능)")
+        st.caption("💡 **안내:** 현재 계좌에 보유 중인 수량을 **[보유수량(주)]** 칸에 직접 입력하셔야 정확한 '살 종목수(추가매수/매도)'가 연산됩니다.")
         
-        # 현재가를 사용자가 임의로 수정할 수 있도록 disabled에서 "현재가(원)" 제거
         edited_df = st.data_editor(base_df, disabled=["Ticker", "자산명", "목표비중(%)"], use_container_width=True, key=f"dash_edit_{strat_id}")
-        
         res_df = edited_df.copy()
         
-        # 목표 수량 연산 (현재가가 0이 되지 않도록 처리되었으므로 빼기 버그 원천 차단)
         res_df["목표수량(주)"] = np.floor((budget * (res_df["목표비중(%)"]/100)) / res_df["현재가(원)"]).replace([np.inf, -np.inf, np.nan], 0)
         res_df["살 종목수(주)"] = res_df["목표수량(주)"] - res_df["보유수량(주)"]
         
@@ -342,7 +346,7 @@ banner_html = f"""
 st.markdown(banner_html, unsafe_allow_html=True)
 
 # ==========================================
-# 🧭 사이드바 및 공통 변수
+# 🧭 사이드바 설정
 # ==========================================
 st.sidebar.title("네비게이션")
 app_mode = st.sidebar.radio("원하시는 기능을 선택하세요:", ["🧮 프라이빗 투자 계산기", "📊 동적 자산배분 대시보드"])
@@ -366,17 +370,19 @@ asset_names = {
 }
 all_tickers = list(set(strat1_off + strat1_def + strat2_off + strat2_def + laa_assets + strat4_off + strat4_def + ["TIP"]))
 
-# ==========================================
-# 메인 로직 시작
-# ==========================================
+# 통화 표기 유틸리티
+def get_fmt(val, curr):
+    if val == 0: return ""
+    return f"{int(val):,}" if curr == "KRW" else f"{val:.2f}"
 
-# ----------------------------------------
-# 1. 🧮 프라이빗 투자 계산기
-# ----------------------------------------
+# ==========================================
+# [모드 1] 🧮 프라이빗 투자 계산기
+# ==========================================
 if app_mode == "🧮 프라이빗 투자 계산기":
     
     with st.spinner("글로벌 종목 데이터를 동기화 중입니다..."):
         SEARCH_OPTIONS = get_all_search_options()
+        EXCH_RATE = get_exchange_rate()
     
     tab_stock, tab_idx, tab_asset, tab_backtest, tab_roe = st.tabs([
         "📊 개별종목 물타기", "📉 지수 물타기", "🗂️ 자산배분 리밸런싱", "⏳ 자산배분 백테스트", "📈 기대수익률(R) 스마트"
@@ -385,7 +391,7 @@ if app_mode == "🧮 프라이빗 투자 계산기":
     # --- 1. 개별종목 물타기 ---
     with tab_stock:
         st.write("개별종목 분할매수 스케줄 계산")
-        st.info("💡 **안내:** 검색 후 종목의 현재가나 배당금이 외부 사정으로 인해 자동으로 나오지 않는다면, 직접 **수동으로 입력해 주세요.**")
+        st.info("💡 **안내:** 검색 후 종목의 현재가나 배당금이 보이지 않는다면 수동으로 입력해 주세요. (미국 종목은 자동으로 달러로 계산됩니다)")
         
         selected_stock = st.selectbox("🔍 종목 검색 (한국 및 미국 전 종목/원자재/레버리지 ETF 동시 검색)", options=SEARCH_OPTIONS, index=1)
         
@@ -397,34 +403,40 @@ if app_mode == "🧮 프라이빗 투자 계산기":
             
         fetched_price, fetched_div = get_stock_info(stock_ticker) if stock_ticker else (0.0, 0.0)
         
+        # 통화 단위 자동 설정 및 수동 오버라이드
+        auto_curr = detect_currency(stock_ticker)
+        curr_override = st.radio("통화 기준 선택", ["자동 인식", "원화 (KRW)", "달러 (USD)"], horizontal=True, key="curr_stock")
+        final_curr = auto_curr if curr_override == "자동 인식" else ("KRW" if "KRW" in curr_override else "USD")
+        sym = "원" if final_curr == "KRW" else "$"
+        
         c1, c2, c3, c4 = st.columns(4)
-        budget_str = c1.text_input("총 투자 금액 (원)", key="budget_stock", on_change=format_number_str, args=("budget_stock",))
-        start_price_str = c2.text_input("1회차 매수 가격 (자동입력)", value=f"{int(fetched_price):,}" if fetched_price > 0 else "", placeholder="수동 입력", key=f"sp_{stock_ticker}")
-        dividend_input_str = c3.text_input("예상 주당 배당금 (자동입력)", value=f"{int(fetched_div):,}" if fetched_div > 0 else "0", key=f"div_{stock_ticker}")
+        budget_str = c1.text_input(f"총 투자 금액 ({sym})", key="budget_stock", on_change=format_number_str, args=("budget_stock",))
+        start_price_str = c2.text_input(f"1회차 매수 가격 ({sym})", value=get_fmt(fetched_price, final_curr) if fetched_price > 0 else "", placeholder="수동 입력", key=f"sp_{stock_ticker}")
+        dividend_input_str = c3.text_input(f"예상 주당 배당금 ({sym})", value=get_fmt(fetched_div, final_curr) if fetched_div > 0 else "0", key=f"div_{stock_ticker}")
         steps = c4.number_input("분할 횟수", min_value=2, max_value=20, value=5)
         
-        budget = safe_int(budget_str)
-        start_price = safe_int(start_price_str)
-        dividend_input = safe_int(dividend_input_str)
+        budget = safe_float(budget_str)
+        start_price = safe_float(start_price_str)
+        dividend_input = safe_float(dividend_input_str)
         
         st.divider()
         drop_type = st.radio("하락폭 설정", ["일괄 (매회 동일)", "직접 입력"], horizontal=True)
         
         drops = []
         if drop_type == "일괄 (매회 동일)":
-            fixed_drop_str = st.text_input("회당 하락 금액 (원)", value="1,000")
-            fixed_drop = safe_int(fixed_drop_str)
+            fixed_drop_str = st.text_input(f"회당 하락 금액 ({sym})", value="1,000" if final_curr == "KRW" else "1.50")
+            fixed_drop = safe_float(fixed_drop_str)
             drops = [fixed_drop] * (steps - 1)
         else:
-            st.write("회차별 하락 금액 설정 (이전 회차 대비)")
+            st.write(f"회차별 하락 금액 설정 ({sym}, 이전 회차 대비)")
             drop_cols = st.columns(steps - 1)
             for i in range(steps - 1):
-                val_str = drop_cols[i].text_input(f"{i+1}➔{i+2}차", value="1,000", key=f"drop_{i}")
-                drops.append(safe_int(val_str))
+                val_str = drop_cols[i].text_input(f"{i+1}➔{i+2}차", value="1,000" if final_curr == "KRW" else "1.50", key=f"drop_{i}")
+                drops.append(safe_float(val_str))
                 
         if st.button("개별종목 계산하기", type="primary"):
             if start_price <= 0:
-                st.error("❗ 매수 가격이 0원이거나 입력되지 않았습니다. 현재가를 수동으로 입력해 주세요.")
+                st.error("❗ 매수 가격이 0이거나 입력되지 않았습니다. 현재가를 수동으로 입력해 주세요.")
             else:
                 w_sum = (steps * (steps + 1)) / 2
                 res, t_spent, t_shares = [], 0, 0
@@ -439,18 +451,22 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                     actual = shares * curr_price
                     t_spent += actual
                     t_shares += shares
-                    res.append({"회차": f"{i}차 ({i}배수)", "목표금액": int(target_amt), "매수가격": int(curr_price), "매수수량": shares, "체결금액": int(actual)})
+                    res.append({"회차": f"{i}차 ({i}배수)", "목표금액": target_amt, "매수가격": curr_price, "매수수량": shares, "체결금액": actual})
                 
-                st.dataframe(pd.DataFrame(res).style.format({"목표금액": "{:,.0f}원", "매수가격": "{:,.0f}원", "체결금액": "{:,.0f}원", "매수수량": "{:,.0f}주"}), use_container_width=True)
+                fmt_rule = "{:,.0f}원" if final_curr == "KRW" else "{:,.2f}$"
+                st.dataframe(pd.DataFrame(res).style.format({"목표금액": fmt_rule, "매수가격": fmt_rule, "체결금액": fmt_rule, "매수수량": "{:,.0f}주"}), use_container_width=True)
                 
-                avg_price = int(t_spent/t_shares) if t_shares > 0 else 0
+                avg_price = (t_spent/t_shares) if t_shares > 0 else 0
                 yield_rate = (dividend_input / avg_price) * 100 if avg_price > 0 and dividend_input > 0 else 0.0
-                st.success(f"**총 매수금액:** {t_spent:,.0f}원 | **평균단가:** {avg_price:,.0f}원 | **예상 배당률:** {yield_rate:.2f}% | **누적수량:** {t_shares:,.0f}주")
+                
+                avg_disp = f"{int(avg_price):,}원" if final_curr == "KRW" else f"{avg_price:,.2f}$"
+                spent_disp = f"{int(t_spent):,}원" if final_curr == "KRW" else f"{t_spent:,.2f}$"
+                st.success(f"**총 매수금액:** {spent_disp} | **평균단가:** {avg_disp} | **예상 배당률:** {yield_rate:.2f}% | **누적수량:** {t_shares:,.0f}주")
 
     # --- 2. 지수 물타기 ---
     with tab_idx:
         st.write("지수/ETF 분할매수 스케줄 계산")
-        st.info("💡 **안내:** 검색 후 종목의 현재가가 외부 사정으로 인해 자동으로 나오지 않는다면, 직접 **수동으로 입력해 주세요.**")
+        st.info("💡 **안내:** 검색 후 종목의 현재가가 자동으로 나오지 않는다면 수동으로 입력해 주세요. (미국 ETF는 달러로 자동 변환됩니다)")
         
         default_idx = next((i for i, x in enumerate(SEARCH_OPTIONS) if "069500" in x), 1)
         selected_idx = st.selectbox("🔍 지수/원자재/ETF 검색", options=SEARCH_OPTIONS, index=default_idx, key="idx_search") 
@@ -463,15 +479,19 @@ if app_mode == "🧮 프라이빗 투자 계산기":
             
         fetched_idx_price, _ = get_stock_info(idx_ticker) if idx_ticker else (0.0, 0.0)
 
+        auto_curr_idx = detect_currency(idx_ticker)
+        curr_override_idx = st.radio("통화 기준 선택", ["자동 인식", "원화 (KRW)", "달러 (USD)"], horizontal=True, key="curr_idx")
+        final_curr_idx = auto_curr_idx if curr_override_idx == "자동 인식" else ("KRW" if "KRW" in curr_override_idx else "USD")
+        sym_idx = "원" if final_curr_idx == "KRW" else "$"
+
         i1, i2, i3, i4 = st.columns(4)
-        
-        idx_budget_str = i1.text_input("지수 총 투자 금액 (원)", key="budget_idx", on_change=format_number_str, args=("budget_idx",))
-        idx_start_str = i2.text_input("첫 매수 지수/단가 (자동입력)", value=f"{int(fetched_idx_price):,}" if fetched_idx_price > 0 else "", placeholder="수동 입력", key=f"idx_p_{idx_ticker}")
+        idx_budget_str = i1.text_input(f"지수 총 투자 금액 ({sym_idx})", key="budget_idx", on_change=format_number_str, args=("budget_idx",))
+        idx_start_str = i2.text_input(f"첫 매수 지수/단가 ({sym_idx})", value=get_fmt(fetched_idx_price, final_curr_idx) if fetched_idx_price > 0 else "", placeholder="수동 입력", key=f"idx_p_{idx_ticker}")
         idx_drop = i3.number_input("구간별 하락률 (%)", value=5.0, step=0.5)
         idx_steps = i4.number_input("지수 분할 횟수", min_value=2, max_value=20, value=5)
         
-        idx_budget = safe_int(idx_budget_str)
-        idx_start = safe_int(idx_start_str)
+        idx_budget = safe_float(idx_budget_str)
+        idx_start = safe_float(idx_start_str)
         
         if st.button("지수 계산하기", type="primary"):
             if idx_start <= 0:
@@ -489,40 +509,50 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                     actual = shares * curr_idx
                     t_spent_idx += actual
                     t_shares_idx += shares
-                    res_idx.append({"회차": f"{i}차 (-{idx_drop*(i-1)}%)", "목표금액": int(target_amt), "매수지수(원)": int(curr_idx), "매수수량": shares, "체결금액": int(actual)})
+                    res_idx.append({"회차": f"{i}차 (-{idx_drop*(i-1)}%)", "목표금액": target_amt, "매수지수(단가)": curr_idx, "매수수량": shares, "체결금액": actual})
                 
-                st.dataframe(pd.DataFrame(res_idx).style.format({"목표금액": "{:,.0f}원", "매수지수(원)": "{:,.0f}원", "체결금액": "{:,.0f}원", "매수수량": "{:,.0f}주"}), use_container_width=True)
-                st.success(f"**총 매수금액:** {t_spent_idx:,.0f}원 | **평균단가:** {int(t_spent_idx/t_shares_idx) if t_shares_idx > 0 else 0:,.0f}원 | **누적수량:** {t_shares_idx:,.0f}주")
+                fmt_rule_idx = "{:,.0f}원" if final_curr_idx == "KRW" else "{:,.2f}$"
+                st.dataframe(pd.DataFrame(res_idx).style.format({"목표금액": fmt_rule_idx, "매수지수(단가)": fmt_rule_idx, "체결금액": fmt_rule_idx, "매수수량": "{:,.0f}주"}), use_container_width=True)
+                
+                avg_p_idx = (t_spent_idx/t_shares_idx) if t_shares_idx > 0 else 0
+                avg_disp_idx = f"{int(avg_p_idx):,}원" if final_curr_idx == "KRW" else f"{avg_p_idx:,.2f}$"
+                spent_disp_idx = f"{int(t_spent_idx):,}원" if final_curr_idx == "KRW" else f"{t_spent_idx:,.2f}$"
+                st.success(f"**총 매수금액:** {spent_disp_idx} | **평균단가:** {avg_disp_idx} | **누적수량:** {t_shares_idx:,.0f}주")
 
     # --- 3. 자산배분 리밸런싱 ---
     with tab_asset:
         st.write("포트폴리오 비중 조절 (리밸런싱) 계산기")
         
-        total_asset_budget_str = st.text_input("총 투자 운용 금액 (원)", key="budget_asset", on_change=format_number_str, args=("budget_asset",))
-        total_asset_budget = safe_int(total_asset_budget_str)
+        base_curr = st.radio("총 투자 운용 금액의 기준 통화 (결과 연산 기준)", ["원화 (KRW)", "달러 (USD)"], horizontal=True)
+        base_sym = "원" if base_curr == "원화 (KRW)" else "$"
+        st.caption(f"💱 **적용 중인 실시간 환율:** {EXCH_RATE:,.2f} 원/달러 (야후 파이낸스 기준)")
+        
+        total_asset_budget_str = st.text_input(f"총 투자 운용 금액 ({base_sym})", key="budget_asset", on_change=format_number_str, args=("budget_asset",))
+        total_asset_budget = safe_float(total_asset_budget_str)
         
         if 'asset_df_base' not in st.session_state:
             st.session_state.asset_df_base = pd.DataFrame([
-                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "069500" in x), "직접 입력"), "현재가(원)": 35000, "목표비중(%)": 30.0, "보유수량(주)": 0},
-                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "360750" in x), "직접 입력"), "현재가(원)": 15000, "목표비중(%)": 30.0, "보유수량(주)": 0},
-                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "308620" in x), "직접 입력"), "현재가(원)": 11000, "목표비중(%)": 20.0, "보유수량(주)": 0},
-                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "SPY" in x), "직접 입력"), "현재가(원)": 750000, "목표비중(%)": 20.0, "보유수량(주)": 0}
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "069500" in x), "직접 입력"), "통화": "KRW", "현재가": 35000.0, "목표비중(%)": 30.0, "보유수량(주)": 0},
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "360750" in x), "직접 입력"), "통화": "KRW", "현재가": 15000.0, "목표비중(%)": 30.0, "보유수량(주)": 0},
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "308620" in x), "직접 입력"), "통화": "KRW", "현재가": 11000.0, "목표비중(%)": 20.0, "보유수량(주)": 0},
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "411060" in x), "직접 입력"), "통화": "KRW", "현재가": 13000.0, "목표비중(%)": 20.0, "보유수량(주)": 0}
             ])
             
         column_config = {
             "자산명 (선택)": st.column_config.SelectboxColumn("자산명 (클릭하여 글로벌 전체 검색)", options=SEARCH_OPTIONS, width="large"),
-            "현재가(원)": st.column_config.NumberColumn("현재가(원)", format="%d"),
+            "통화": st.column_config.SelectboxColumn("통화", options=["KRW", "USD"]),
+            "현재가": st.column_config.NumberColumn("현재가", format="%.2f"),
             "목표비중(%)": st.column_config.NumberColumn("목표비중(%)", min_value=0.0, max_value=100.0),
             "보유수량(주)": st.column_config.NumberColumn("보유수량(주)", min_value=0, format="%d")
         }
 
-        st.caption("💡 자산을 추가하려면 표의 빈 칸(아래쪽)을 클릭하고, 삭제하려면 맨 왼쪽 칸(인덱스)을 클릭 후 휴지통 아이콘(또는 Delete 키)을 누르세요.")
+        st.caption("💡 자산을 추가하려면 표의 빈 칸(아래쪽)을 클릭하고, 삭제하려면 맨 왼쪽 칸(인덱스)을 클릭 후 휴지통 아이콘(또는 Delete 키)을 누르세요. 미국/한국 자산이 섞여도 환율이 자동 적용되어 '살 종목수'가 계산됩니다.")
         edited_df = st.data_editor(st.session_state.asset_df_base, num_rows="dynamic", column_config=column_config, use_container_width=True, key="asset_editor")
         
         btn_col1, btn_col2 = st.columns([1, 4])
         with btn_col1:
-            if st.button("🔄 현재가 일괄 업데이트"):
-                with st.spinner("현재가를 실시간으로 조회중입니다..."):
+            if st.button("🔄 현재가 및 통화 일괄 업데이트"):
+                with st.spinner("현재가 및 통화 설정을 실시간으로 조회중입니다..."):
                     updated_df = edited_df.copy()
                     for idx, row in updated_df.iterrows():
                         asset_str = row["자산명 (선택)"]
@@ -530,7 +560,8 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                             ticker = asset_str.split("(")[-1].replace(")", "").strip()
                             price, _ = get_stock_info(ticker)
                             if price > 0:
-                                updated_df.at[idx, "현재가(원)"] = int(price)
+                                updated_df.at[idx, "현재가"] = price
+                                updated_df.at[idx, "통화"] = detect_currency(ticker)
                     st.session_state.asset_df_base = updated_df
                     st.rerun()
 
@@ -538,27 +569,58 @@ if app_mode == "🧮 프라이빗 투자 계산기":
         if total_ratio != 100:
             st.error(f"목표 비중의 합이 100%가 아닙니다. (현재: {total_ratio}%)")
             
-        st.write("📊 **리밸런싱 실시간 연산 결과 (자동 연동)**")
-        result_df = edited_df.copy()
+        st.write("📊 **리밸런싱 실시간 연산 결과 (자동 환율 적용)**")
         
-        result_df["목표수량(주)"] = np.floor((total_asset_budget * (result_df["목표비중(%)"]/100)) / result_df["현재가(원)"]).replace([np.inf, -np.inf, np.nan], 0)
-        result_df["살 종목수(주)"] = result_df["목표수량(주)"] - result_df["보유수량(주)"]
+        # 목표 수량 산출 (환율 변환)
+        res_df = edited_df.copy()
+        
+        # 총 예산을 해당 종목의 통화로 맞춰서 수량 도출
+        # 만약 budget이 KRW이고, 종목이 USD라면 -> target_amount_krw / (price_usd * exch_rate)
+        # 만약 budget이 USD이고, 종목이 KRW라면 -> target_amount_usd / (price_krw / exch_rate)
+        
+        target_shares_list = []
+        for idx, row in res_df.iterrows():
+            if row["현재가"] <= 0:
+                target_shares_list.append(0)
+                continue
+                
+            w = row["목표비중(%)"] / 100.0
+            
+            # 자산의 가격을 기준 통화(Base Currency)로 변환
+            if base_curr == "원화 (KRW)":
+                price_in_base = row["현재가"] if row["통화"] == "KRW" else row["현재가"] * EXCH_RATE
+            else: # 달러 기준
+                price_in_base = row["현재가"] if row["통화"] == "USD" else row["현재가"] / EXCH_RATE
+                
+            if price_in_base > 0:
+                shares = np.floor((total_asset_budget * w) / price_in_base)
+                target_shares_list.append(shares)
+            else:
+                target_shares_list.append(0)
+                
+        res_df["목표수량(주)"] = target_shares_list
+        res_df["살 종목수(주)"] = res_df["목표수량(주)"] - res_df["보유수량(주)"].fillna(0)
+        
+        def fmt_price(row):
+            if pd.isna(row['현재가']): return ""
+            return f"{row['현재가']:,.0f}원" if row['통화'] == "KRW" else f"{row['현재가']:,.2f}$"
+
+        disp_df = res_df[["자산명 (선택)", "통화", "현재가", "보유수량(주)", "목표수량(주)", "살 종목수(주)"]].copy()
+        disp_df['현재가(표시)'] = disp_df.apply(fmt_price, axis=1)
+        disp_df = disp_df[["자산명 (선택)", "통화", "현재가(표시)", "보유수량(주)", "목표수량(주)", "살 종목수(주)"]]
         
         def color_action(val):
             color = 'green' if val > 0 else 'red' if val < 0 else 'gray'
             return f'color: {color}; font-weight: bold;'
         
-        styled_df = result_df[["자산명 (선택)", "현재가(원)", "보유수량(주)", "목표수량(주)", "살 종목수(주)"]].style.format({
-            "현재가(원)": "{:,.0f}원", 
+        styled_df = disp_df.style.format({
             "보유수량(주)": "{:,.0f}주", 
             "목표수량(주)": "{:,.0f}주", 
             "살 종목수(주)": "{:,.0f}주"
         })
         
-        if hasattr(styled_df, "map"):
-            styled_df = styled_df.map(color_action, subset=["살 종목수(주)"])
-        else:
-            styled_df = styled_df.applymap(color_action, subset=["살 종목수(주)"])
+        if hasattr(styled_df, "map"): styled_df = styled_df.map(color_action, subset=["살 종목수(주)"])
+        else: styled_df = styled_df.applymap(color_action, subset=["살 종목수(주)"])
             
         st.dataframe(styled_df, use_container_width=True)
 
