@@ -903,8 +903,8 @@ def render_dashboard_rebalancer(strat_id, buy_dict):
                 st.divider()
                 render_dashboard_rebalancer("4", buy4_curr)
 
-except Exception as e:
-    st.error(f"오류가 발생했습니다: {e}")
+    except Exception as e:
+        st.error(f"오류가 발생했습니다: {e}")
 
 
 # ==========================================
