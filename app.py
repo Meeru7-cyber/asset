@@ -36,7 +36,7 @@ if "budget_idx" not in st.session_state: st.session_state.budget_idx = "15,000,0
 if "budget_asset" not in st.session_state: st.session_state.budget_asset = "100,000,000"
 
 # ==========================================
-# 🧭 공통 기능: CNN Fear & Greed & 전체 종목 검색
+# 🧭 공통 기능: CNN Fear & Greed & 전체 종목 검색 (미국 확장)
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_fear_and_greed():
@@ -57,7 +57,9 @@ def get_fear_and_greed():
 
 @st.cache_data(ttl=86400)
 def get_all_search_options():
+    """한국거래소 및 미국(S&P500, NASDAQ, NYSE) 전체 종목 + 주요 ETF/원자재 통합"""
     try:
+        # 한국 시장
         kospi = fdr.StockListing('KOSPI')
         kospi_list = (kospi['Name'] + " (" + kospi['Code'] + ".KS)").tolist()
         
@@ -67,15 +69,44 @@ def get_all_search_options():
         etf = fdr.StockListing('ETF/KR')
         etf_list = (etf['Name'] + " (" + etf['Symbol'] + ".KS)").tolist()
         
-        all_kr = list(set(kospi_list + kosdaq_list + etf_list))
-    except:
-        all_kr = ["삼성전자 (005930.KS)", "KODEX 200 (069500.KS)", "TIGER 미국나스닥100 (133690.KS)"]
+        # 미국 시장
+        sp500 = fdr.StockListing('S&P500')
+        sp500_list = (sp500['Name'] + " (" + sp500['Symbol'] + ")").tolist()
         
-    us_majors = [
-        "Apple (AAPL)", "Microsoft (MSFT)", "NVIDIA (NVDA)", "Tesla (TSLA)", "Alphabet (GOOGL)",
-        "SPDR S&P 500 (SPY)", "Invesco QQQ (QQQ)", "iShares 20+ Year Treasury (TLT)", "Schwab US Dividend (SCHD)"
+        nasdaq = fdr.StockListing('NASDAQ')
+        nasdaq_list = (nasdaq['Name'] + " (" + nasdaq['Symbol'] + ")").tolist()
+        
+        nyse = fdr.StockListing('NYSE')
+        nyse_list = (nyse['Name'] + " (" + nyse['Symbol'] + ")").tolist()
+        
+        all_auto = list(set(kospi_list + kosdaq_list + etf_list + sp500_list + nasdaq_list + nyse_list))
+    except:
+        all_auto = ["삼성전자 (005930.KS)", "KODEX 200 (069500.KS)", "TIGER 미국나스닥100 (133690.KS)", "Apple (AAPL)"]
+        
+    # 검색이 어려운 주요 미국 원자재, 지수, 채권, 섹터 ETF 수동 보완 세팅
+    us_etfs_and_commodities = [
+        # 대표 지수
+        "SPDR S&P 500 ETF (SPY)", "Invesco QQQ Trust (QQQ)", "Vanguard Total Stock Market (VTI)", 
+        "SPDR Dow Jones Industrial Average (DIA)", "iShares Russell 2000 (IWM)", "Vanguard Total World Stock (VT)",
+        # 채권
+        "iShares 20+ Year Treasury Bond (TLT)", "iShares 7-10 Year Treasury Bond (IEF)", "iShares 1-3 Year Treasury Bond (SHY)", 
+        "SPDR Bloomberg 1-3 Month T-Bill (BIL)", "iShares Core US Aggregate Bond (AGG)", "iShares TIPS Bond ETF (TIP)",
+        # 원자재 & 금속
+        "SPDR Gold Shares (GLD)", "iShares Gold Trust (IAU)", "iShares Silver Trust (SLV)", 
+        "Invesco DB Commodity Index Tracking Fund (DBC)", "United States Oil Fund (USO)", "Invesco DB Agriculture Fund (DBA)",
+        "Global X Copper Miners ETF (COPX)", "Global X Lithium & Battery Tech ETF (LIT)", "Global X Uranium ETF (URA)",
+        # 섹터 및 테마
+        "Technology Select Sector SPDR Fund (XLK)", "Health Care Select Sector SPDR Fund (XLV)", "Financial Select Sector SPDR Fund (XLF)", 
+        "Energy Select Sector SPDR Fund (XLE)", "Vanguard Real Estate Index Fund (VNQ)", "iShares Semiconductor ETF (SOXX)", 
+        "VanEck Semiconductor ETF (SMH)", "iShares Biotechnology ETF (IBB)", "iShares Expanded Tech-Software Sector ETF (IGV)",
+        "First Trust Cloud Computing ETF (SKYY)", "SPDR S&P Retail ETF (XRT)", "Schwab US Dividend Equity ETF (SCHD)",
+        "iShares Russell 1000 Value ETF (IWD)", "iShares Russell 1000 Growth ETF (IWF)",
+        # 글로벌 (미국 외)
+        "Vanguard FTSE Developed Markets ETF (VEA)", "Vanguard FTSE Emerging Markets ETF (VWO)", "iShares MSCI EAFE ETF (EFA)"
     ]
-    return ["직접 입력 (여기에 없는 종목)"] + sorted(all_kr) + us_majors
+    
+    combined = list(set(all_auto + us_etfs_and_commodities))
+    return ["직접 입력 (여기에 없는 종목)"] + sorted(combined)
 
 @st.cache_data(ttl=600)
 def get_stock_info(ticker):
@@ -93,8 +124,8 @@ def get_stock_info(ticker):
 # ==========================================
 # 🎨 메인 타이틀 및 F&G 배너
 # ==========================================
-st.markdown("<h1 style='text-align: center;'>📊 프라이빗 투자 계산기</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center; color: #8b90a8; margin-top: -10px; margin-bottom: 30px;'>물타기 · 지수분할 · 기대수익률 · 자산배분 · 백테스트 통합 계산</p>", unsafe_allow_html=True)
+st.markdown("<h1 style='text-align: center;'>📊 프라이빗 투자 플랫폼</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: #8b90a8; margin-top: -10px; margin-bottom: 30px;'>개인 투자자를 위한 맞춤형 계산기 및 자산배분 대시보드</p>", unsafe_allow_html=True)
 
 fng_score, fng_rating = get_fear_and_greed()
 
@@ -125,12 +156,14 @@ st.markdown(banner_html, unsafe_allow_html=True)
 
 
 # ==========================================
-# 🧭 사이드바 설정
+# 🧭 사이드바 설정 (메뉴 순서 변경)
 # ==========================================
 st.sidebar.title("네비게이션")
-app_mode = st.sidebar.radio("원하시는 기능을 선택하세요:", ["📊 동적 자산배분 대시보드", "🧮 프라이빗 투자 계산기"])
+# 프라이빗 투자 계산기를 상단(기본 선택)으로 이동
+app_mode = st.sidebar.radio("원하시는 기능을 선택하세요:", ["🧮 프라이빗 투자 계산기", "📊 동적 자산배분 대시보드"])
 st.sidebar.caption("데이터 제공: Yahoo Finance, FRED, CNN")
 
+# 동적 자산배분용 리스트
 strat1_off = ["QQQ", "VEU", "VWO", "TLT", "IEF", "DBC", "VNQ"]
 strat1_def = ["IEF", "BIL"]
 strat2_off = ["IBB", "IGV", "SKYY", "SOXX", "XLE", "XRT", "IEF", "DBC"]
@@ -170,109 +203,12 @@ def get_aaa_score(series, idx=-1):
 
 
 # ==========================================
-# [모드 1] 동적 자산배분 대시보드
+# [모드 1] 🧮 프라이빗 투자 계산기 (위로 이동됨)
 # ==========================================
-if app_mode == "📊 동적 자산배분 대시보드":
-    st.subheader("💡 동적 자산배분 실시간 리밸런싱 대시보드")
-    try:
-        with st.spinner('금융 시장 데이터를 실시간 동기화 중입니다...'):
-            data = load_financial_data(all_tickers)
-            unrate_data = load_fred_data()
-            
-        month_data = data.resample('ME').last()
-        
-        if len(month_data) < 13:
-            st.error("데이터가 부족합니다.")
-        else:
-            st.write(f"📅 실시간 분석 기준일: **{month_data.index[-1].strftime('%Y년 %m월 %d일')}**")
-            
-            tab1, tab2, tab3, tab4 = st.tabs([
-                "📌 1. 밸런스 전략", "🚀 2. 미국밸런스 섹터 전략", 
-                "🛡️ 3. LAA 전략", "⚡ 4. 한국형가속자산배분전략"
-            ])
-            tip_score = get_baa_score(month_data["TIP"])
-            
-            with tab1:
-                col1, col2 = st.columns([1, 2])
-                buy1 = {}
-                with col1:
-                    st.metric("🎗️ TIP 스코어", f"{tip_score:.4f}")
-                    if tip_score > 0:
-                        st.success("📈 공격형 자산 매수장")
-                        top4 = pd.Series({a: get_baa_score(month_data[a]) for a in strat1_off}).nlargest(4)
-                        for a in top4.index: buy1[a] = "25.0%"
-                    else:
-                        st.warning("📉 방어형 안전자산 대피장")
-                        top1 = pd.Series({a: get_baa_score(month_data[a]) for a in strat1_def}).nlargest(1)
-                        buy1[top1.index[0]] = "100.0%"
-                with col2:
-                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy1.items()]))
-
-            with tab2:
-                col3, col4 = st.columns([1, 2])
-                buy2 = {}
-                with col3:
-                    st.metric("🎗️ TIP 스코어", f"{tip_score:.4f}")
-                    if tip_score > 0:
-                        st.success("📈 공격형 자산 매수장")
-                        top4 = pd.Series({a: get_baa_score(month_data[a]) for a in strat2_off}).nlargest(4)
-                        for a in top4.index: buy2[a] = "25.0%"
-                    else:
-                        st.warning("📉 방어형 안전자산 대피장")
-                        top1 = pd.Series({a: get_baa_score(month_data[a]) for a in strat2_def}).nlargest(1)
-                        buy2[top1.index[0]] = "100.0%"
-                with col4:
-                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy2.items()]))
-
-            with tab3:
-                col5, col6 = st.columns([1, 2])
-                buy3 = {"IWD": "25.0%", "GLD": "25.0%", "IEF": "25.0%"}
-                
-                spy_curr = data['SPY'].iloc[-1]
-                spy_200 = data['SPY'].rolling(200).mean().iloc[-1]
-                unrate_curr = unrate_data['UNRATE'].iloc[-1]
-                unrate_12 = unrate_data['UNRATE'].rolling(12).mean().iloc[-1]
-                
-                cond1 = spy_curr < spy_200
-                cond2 = unrate_curr > unrate_12
-                
-                with col5:
-                    if cond1 and cond2:
-                        st.warning("🚨 불황장 ➔ **SHY 매수**")
-                        buy3["SHY"] = "25.0%"
-                    else:
-                        st.info("☀️ 평시/회복기 ➔ **QQQ 매수**")
-                        buy3["QQQ"] = "25.0%"
-                with col6:
-                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy3.items()]))
-
-            with tab4:
-                col7, col8 = st.columns([1, 2])
-                buy4 = {}
-                aaa_scores = pd.Series({a: get_aaa_score(month_data[a]) for a in strat4_off})
-                max_sc = aaa_scores.max()
-                
-                with col7:
-                    if max_sc > 0:
-                        st.success("📈 공격형 자산 집중")
-                        buy4[aaa_scores.nlargest(1).index[0]] = "100.0%"
-                    else:
-                        st.warning("📉 방어형 자산 대피")
-                        def_scores = pd.Series({a: month_data[a].iloc[-1]/month_data[a].iloc[-2] for a in strat4_def})
-                        buy4[def_scores.nlargest(1).index[0]] = "100.0%"
-                with col8:
-                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy4.items()]))
-
-    except Exception as e:
-        st.error(f"오류가 발생했습니다: {e}")
-
-
-# ==========================================
-# [모드 2] 프라이빗 투자 계산기
-# ==========================================
-elif app_mode == "🧮 프라이빗 투자 계산기":
+if app_mode == "🧮 프라이빗 투자 계산기":
     
-    SEARCH_OPTIONS = get_all_search_options()
+    with st.spinner("미국 및 한국의 모든 종목 및 원자재 데이터를 동기화 중입니다..."):
+        SEARCH_OPTIONS = get_all_search_options()
     
     tab_stock, tab_idx, tab_asset, tab_backtest, tab_roe = st.tabs([
         "📊 개별종목 물타기", "📉 지수 물타기", "🗂️ 자산배분 리밸런싱", "⏳ 자산배분 백테스트", "📈 기대수익률(R)"
@@ -282,10 +218,9 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
     with tab_stock:
         st.write("개별종목 분할매수 스케줄 계산")
         
-        # 신규: 사용자 안내 문구 추가
-        st.info("💡 **안내:** 검색 후 종목의 현재가나 배당금이 외부 사정으로 인해 자동으로 나오지 않는다면, 해당 칸에 직접 **수동으로 입력해 주세요.**")
+        st.info("💡 **안내:** 검색 후 종목의 현재가나 배당금이 외부 사정으로 인해 자동으로 나오지 않는다면, 직접 **수동으로 입력해 주세요.**")
         
-        selected_stock = st.selectbox("🔍 종목 검색 (한국 코스피/코스닥 전체 및 미국 주요 종목 지원)", options=SEARCH_OPTIONS, index=1)
+        selected_stock = st.selectbox("🔍 종목 검색 (한국 및 미국 전 종목/원자재/ETF 동시 검색)", options=SEARCH_OPTIONS, index=1)
         
         stock_ticker = ""
         if selected_stock == "직접 입력 (여기에 없는 종목)":
@@ -298,7 +233,6 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
         c1, c2, c3, c4 = st.columns(4)
         budget_str = c1.text_input("총 투자 금액 (원)", key="budget_stock", on_change=format_number_str, args=("budget_stock",))
         
-        # 신규: 선택된 종목의 Ticker를 key에 포함시켜, 종목이 바뀔 때마다 값을 강제로 새로고침 하도록 변경
         start_price_str = c2.text_input(
             "1회차 매수 가격 (자동입력)", 
             value=f"{int(fetched_price):,}" if fetched_price > 0 else "", 
@@ -360,11 +294,10 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
     # --- 2. 지수 물타기 ---
     with tab_idx:
         st.write("지수/ETF 분할매수 스케줄 계산")
-        
         st.info("💡 **안내:** 검색 후 종목의 현재가가 외부 사정으로 인해 자동으로 나오지 않는다면, 직접 **수동으로 입력해 주세요.**")
         
         default_idx = next((i for i, x in enumerate(SEARCH_OPTIONS) if "069500" in x), 1)
-        selected_idx = st.selectbox("🔍 지수/ETF 검색", options=SEARCH_OPTIONS, index=default_idx, key="idx_search") 
+        selected_idx = st.selectbox("🔍 지수/원자재/ETF 검색", options=SEARCH_OPTIONS, index=default_idx, key="idx_search") 
         
         idx_ticker = ""
         if selected_idx == "직접 입력 (여기에 없는 종목)":
@@ -377,8 +310,6 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
         i1, i2, i3, i4 = st.columns(4)
         
         idx_budget_str = i1.text_input("지수 총 투자 금액 (원)", key="budget_idx", on_change=format_number_str, args=("budget_idx",))
-        
-        # 신규: 인덱스 티커 기반 동적 키 지정
         idx_start_str = i2.text_input(
             "첫 매수 지수/단가 (자동입력)", 
             value=f"{int(fetched_idx_price):,}" if fetched_idx_price > 0 else "",
@@ -424,11 +355,11 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
                 {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "069500" in x), "직접 입력"), "현재가(원)": 35000, "목표비중(%)": 30.0, "보유수량(주)": 0},
                 {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "360750" in x), "직접 입력"), "현재가(원)": 15000, "목표비중(%)": 30.0, "보유수량(주)": 0},
                 {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "308620" in x), "직접 입력"), "현재가(원)": 11000, "목표비중(%)": 20.0, "보유수량(주)": 0},
-                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "411060" in x), "직접 입력"), "현재가(원)": 13000, "목표비중(%)": 20.0, "보유수량(주)": 0}
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "SPY" in x), "직접 입력"), "현재가(원)": 750000, "목표비중(%)": 20.0, "보유수량(주)": 0}
             ])
             
         column_config = {
-            "자산명 (선택)": st.column_config.SelectboxColumn("자산명 (클릭하여 전체 검색)", options=SEARCH_OPTIONS, width="large"),
+            "자산명 (선택)": st.column_config.SelectboxColumn("자산명 (클릭하여 글로벌 전체 검색)", options=SEARCH_OPTIONS, width="large"),
             "현재가(원)": st.column_config.NumberColumn("현재가(원)", format="%d"),
             "목표비중(%)": st.column_config.NumberColumn("목표비중(%)", min_value=0.0, max_value=100.0),
             "보유수량(주)": st.column_config.NumberColumn("보유수량(주)", min_value=0, format="%d")
@@ -495,7 +426,7 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
             ])
             
         bt_config = {
-            "자산명 (선택)": st.column_config.SelectboxColumn("자산명 (클릭하여 전체 검색)", options=SEARCH_OPTIONS, width="large"),
+            "자산명 (선택)": st.column_config.SelectboxColumn("자산명 (클릭하여 글로벌 전체 검색)", options=SEARCH_OPTIONS, width="large"),
             "투입비중(%)": st.column_config.NumberColumn("투입비중(%)", min_value=0.0, max_value=100.0)
         }
         
@@ -605,6 +536,103 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
                 st.success(f"🎉 **도출된 연평균 기대수익률:** {exp_return:.2f}% (우수)")
             else:
                 st.info(f"📊 **도출된 연평균 기대수익률:** {exp_return:.2f}%")
+
+# ==========================================
+# [모드 2] 📊 동적 자산배분 대시보드 (아래로 이동됨)
+# ==========================================
+elif app_mode == "📊 동적 자산배분 대시보드":
+    st.subheader("💡 동적 자산배분 실시간 리밸런싱 대시보드")
+    try:
+        with st.spinner('금융 시장 데이터를 실시간 동기화 중입니다...'):
+            data = load_financial_data(all_tickers)
+            unrate_data = load_fred_data()
+            
+        month_data = data.resample('ME').last()
+        
+        if len(month_data) < 13:
+            st.error("데이터가 부족합니다.")
+        else:
+            st.write(f"📅 실시간 분석 기준일: **{month_data.index[-1].strftime('%Y년 %m월 %d일')}**")
+            
+            tab1, tab2, tab3, tab4 = st.tabs([
+                "📌 1. 밸런스 전략", "🚀 2. 미국밸런스 섹터 전략", 
+                "🛡️ 3. LAA 전략", "⚡ 4. 한국형가속자산배분전략"
+            ])
+            tip_score = get_baa_score(month_data["TIP"])
+            
+            with tab1:
+                col1, col2 = st.columns([1, 2])
+                buy1 = {}
+                with col1:
+                    st.metric("🎗️ TIP 스코어", f"{tip_score:.4f}")
+                    if tip_score > 0:
+                        st.success("📈 공격형 자산 매수장")
+                        top4 = pd.Series({a: get_baa_score(month_data[a]) for a in strat1_off}).nlargest(4)
+                        for a in top4.index: buy1[a] = "25.0%"
+                    else:
+                        st.warning("📉 방어형 안전자산 대피장")
+                        top1 = pd.Series({a: get_baa_score(month_data[a]) for a in strat1_def}).nlargest(1)
+                        buy1[top1.index[0]] = "100.0%"
+                with col2:
+                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy1.items()]))
+
+            with tab2:
+                col3, col4 = st.columns([1, 2])
+                buy2 = {}
+                with col3:
+                    st.metric("🎗️ TIP 스코어", f"{tip_score:.4f}")
+                    if tip_score > 0:
+                        st.success("📈 공격형 자산 매수장")
+                        top4 = pd.Series({a: get_baa_score(month_data[a]) for a in strat2_off}).nlargest(4)
+                        for a in top4.index: buy2[a] = "25.0%"
+                    else:
+                        st.warning("📉 방어형 안전자산 대피장")
+                        top1 = pd.Series({a: get_baa_score(month_data[a]) for a in strat2_def}).nlargest(1)
+                        buy2[top1.index[0]] = "100.0%"
+                with col4:
+                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy2.items()]))
+
+            with tab3:
+                col5, col6 = st.columns([1, 2])
+                buy3 = {"IWD": "25.0%", "GLD": "25.0%", "IEF": "25.0%"}
+                
+                spy_curr = data['SPY'].iloc[-1]
+                spy_200 = data['SPY'].rolling(200).mean().iloc[-1]
+                unrate_curr = unrate_data['UNRATE'].iloc[-1]
+                unrate_12 = unrate_data['UNRATE'].rolling(12).mean().iloc[-1]
+                
+                cond1 = spy_curr < spy_200
+                cond2 = unrate_curr > unrate_12
+                
+                with col5:
+                    if cond1 and cond2:
+                        st.warning("🚨 불황장 ➔ **SHY 매수**")
+                        buy3["SHY"] = "25.0%"
+                    else:
+                        st.info("☀️ 평시/회복기 ➔ **QQQ 매수**")
+                        buy3["QQQ"] = "25.0%"
+                with col6:
+                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy3.items()]))
+
+            with tab4:
+                col7, col8 = st.columns([1, 2])
+                buy4 = {}
+                aaa_scores = pd.Series({a: get_aaa_score(month_data[a]) for a in strat4_off})
+                max_sc = aaa_scores.max()
+                
+                with col7:
+                    if max_sc > 0:
+                        st.success("📈 공격형 자산 집중")
+                        buy4[aaa_scores.nlargest(1).index[0]] = "100.0%"
+                    else:
+                        st.warning("📉 방어형 자산 대피")
+                        def_scores = pd.Series({a: month_data[a].iloc[-1]/month_data[a].iloc[-2] for a in strat4_def})
+                        buy4[def_scores.nlargest(1).index[0]] = "100.0%"
+                with col8:
+                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy4.items()]))
+
+    except Exception as e:
+        st.error(f"오류가 발생했습니다: {e}")
 
 
 # ==========================================
