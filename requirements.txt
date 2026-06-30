@@ -5,4 +5,3 @@ numpy
 pandas-datareader
 requests
 finance-datareader
-io
