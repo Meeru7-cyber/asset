@@ -6,10 +6,17 @@ import yfinance as yf
 import pandas_datareader.data as web
 import requests
 import FinanceDataReader as fdr
-import io
 
 # 페이지 기본 설정
 st.set_page_config(page_title="프라이빗 통합 투자 플랫폼", layout="wide")
+
+# ==========================================
+# 🛡️ 야후 파이낸스 Rate Limit 차단 방지용 세션 위장
+# ==========================================
+yf_session = requests.Session()
+yf_session.headers.update({
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+})
 
 # ==========================================
 # 🧭 금액 콤마 처리용 안전 변환 함수 & 콜백
@@ -40,7 +47,6 @@ if "budget_dash2" not in st.session_state: st.session_state.budget_dash2 = "100,
 if "budget_dash3" not in st.session_state: st.session_state.budget_dash3 = "100,000,000"
 if "budget_dash4" not in st.session_state: st.session_state.budget_dash4 = "100,000,000"
 
-# ROE/PBR 실시간 연동을 위한 UI 상태 초기화
 if "ui_pbr" not in st.session_state: st.session_state.ui_pbr = 1.20
 if "ui_roe" not in st.session_state: st.session_state.ui_roe = 15.0
 if "ui_price" not in st.session_state: st.session_state.ui_price = 10000.0
@@ -49,14 +55,23 @@ if "roe_val_5" not in st.session_state: st.session_state.roe_val_5 = 15.0
 if "roe_val_10" not in st.session_state: st.session_state.roe_val_10 = 15.0
 
 # ==========================================
-# 🧭 DART 재무제표 파일 파싱 함수 (BPS, ROE)
+# 🧭 DART 재무제표 파일 파싱 함수 (BPS, ROE 정밀 추출)
 # ==========================================
 def parse_dart_files(files, comp_name):
     """업로드된 DART txt 파일에서 자본총계와 당기순이익 추출"""
     eq = [0.0, 0.0, 0.0] # 당기, 전기, 전전기 자본총계
     ni = [0.0, 0.0, 0.0] # 당기, 전기, 전전기 당기순이익
     
+    def to_float(val):
+        try:
+            v = str(val).replace(',', '').strip()
+            if v == '-' or v == '': return 0.0
+            return float(v)
+        except:
+            return 0.0
+
     for f in files:
+        f.seek(0)
         try:
             df = pd.read_csv(f, sep='\t', encoding='utf-8')
         except:
@@ -69,48 +84,36 @@ def parse_dart_files(files, comp_name):
         if '회사명' not in df.columns or '항목명' not in df.columns:
             continue
 
-        # 검색된 회사명 필터링
         cdf = df[df['회사명'].astype(str).str.contains(comp_name, na=False)]
         if cdf.empty: continue
 
-        # 1. 자본총계 찾기 (재무상태표)
+        # 1. 자본총계 추출
         eq_rows = cdf[cdf['항목명'].astype(str).str.contains('자본총계', na=False)]
         if not eq_rows.empty:
             for i, col in enumerate(['당기', '전기', '전전기']):
                 if col in eq_rows.columns:
-                    v = str(eq_rows.iloc[0][col]).replace(',', '').strip()
-                    if v.replace('-', '').replace('.', '').isdigit():
-                        eq[i] = float(v)
+                    eq[i] = to_float(eq_rows.iloc[0][col])
 
-        # 2. 당기순이익 찾기 (손익계산서)
+        # 2. 당기순이익 추출
         ni_rows = cdf[cdf['항목명'].astype(str).str.contains('당기순이익', na=False)]
         if not ni_rows.empty:
             for i, col in enumerate(['당기', '전기', '전전기']):
                 if col in ni_rows.columns:
-                    v = str(ni_rows.iloc[0][col]).replace(',', '').strip()
-                    if v.replace('-', '').replace('.', '').isdigit():
-                        ni[i] = float(v)
-                        
+                    ni[i] = to_float(ni_rows.iloc[0][col])
+                    
     return eq, ni
 
 # ==========================================
-# 🧭 공통 기능: CNN Fear & Greed & 전체 종목 검색
+# 🧭 공통 기능: 데이터 로더
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_fear_and_greed():
     try:
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-            'Accept': 'text/html,application/json'
-        }
-        res = requests.get("https://production.dataviz.cnn.io/index/fearandgreed/graphdata", headers=headers, timeout=5)
+        res = requests.get("https://production.dataviz.cnn.io/index/fearandgreed/graphdata", headers=yf_session.headers, timeout=5)
         if res.status_code == 200:
             data = res.json()
-            score = int(data['fear_and_greed']['score'])
-            rating = data['fear_and_greed']['rating']
-            return score, rating
-    except:
-        pass
+            return int(data['fear_and_greed']['score']), data['fear_and_greed']['rating']
+    except: pass
     return None, None
 
 @st.cache_data(ttl=86400)
@@ -131,7 +134,7 @@ def get_all_search_options():
         nyse_list = (nyse['Name'] + " (" + nyse['Symbol'] + ")").tolist()
         all_auto = list(set(kospi_list + kosdaq_list + etf_list + sp500_list + nasdaq_list + nyse_list))
     except:
-        all_auto = ["삼성전자 (005930.KS)", "KODEX 200 (069500.KS)", "TIGER 미국나스닥100 (133690.KS)", "Apple (AAPL)"]
+        all_auto = ["삼성전자 (005930.KS)", "KODEX 200 (069500.KS)"]
         
     us_etfs_and_commodities = [
         "SPDR S&P 500 ETF (SPY)", "Invesco QQQ Trust (QQQ)", "Vanguard S&P 500 ETF (VOO)", "Invesco NASDAQ 100 ETF (QQQM)",
@@ -150,7 +153,7 @@ def get_all_search_options():
 def get_stock_info(ticker):
     if not ticker or ticker == "직접 입력": return 0.0, 0.0
     try:
-        t = yf.Ticker(ticker)
+        t = yf.Ticker(ticker, session=yf_session)
         price = float(t.history(period="1d")['Close'].iloc[-1])
         info = t.info
         dividend = info.get('dividendRate', info.get('trailingAnnualDividendRate', 0.0))
@@ -161,10 +164,9 @@ def get_stock_info(ticker):
 
 @st.cache_data(ttl=3600)
 def get_pbr_roe_price(ticker):
-    """현재 주가, PBR, 3년/5년/10년 평균 ROE 추출 (인터넷 동기화용)"""
     if not ticker or "직접 입력" in ticker: return 0.0, 0.0, 0.0, 0.0, 0.0
     try:
-        t = yf.Ticker(ticker)
+        t = yf.Ticker(ticker, session=yf_session)
         hist = t.history(period="1d")
         price = float(hist['Close'].iloc[-1]) if not hist.empty else 0.0
         
@@ -172,10 +174,9 @@ def get_pbr_roe_price(ticker):
         if ticker.endswith('.KS') or ticker.endswith('.KQ'):
             code = ticker.split('.')[0]
             try:
-                res = requests.get(f"https://m.stock.naver.com/api/stock/{code}/basic", timeout=3)
+                res = requests.get(f"https://m.stock.naver.com/api/stock/{code}/basic", headers=yf_session.headers, timeout=3)
                 if res.status_code == 200:
-                    data = res.json()
-                    pbr = float(data['result']['pbr'])
+                    pbr = float(res.json()['result']['pbr'])
             except: pass
             
         if pbr == 0.0:
@@ -208,7 +209,6 @@ def get_pbr_roe_price(ticker):
         except: pass
         
         current_roe = t.info.get('returnOnEquity', 0.0) * 100 if t.info.get('returnOnEquity') else 0.0
-        
         avg_roe_3 = sum(roes[:3]) / len(roes[:3]) if len(roes[:3]) > 0 else current_roe
         avg_roe_5 = sum(roes[:5]) / len(roes[:5]) if len(roes[:5]) > 0 else avg_roe_3
         avg_roe_10 = sum(roes[:10]) / len(roes[:10]) if len(roes[:10]) > 0 else avg_roe_5
@@ -216,6 +216,67 @@ def get_pbr_roe_price(ticker):
         return float(pbr), float(avg_roe_3), float(avg_roe_5), float(avg_roe_10), float(price)
     except:
         return 1.0, 0.0, 0.0, 0.0, 0.0
+
+@st.cache_data(ttl=14400)
+def load_financial_data(tickers):
+    start_date = (datetime.date.today() - datetime.timedelta(days=730)).strftime('%Y-%m-%d')
+    # 세션 추가하여 차단(Rate Limit) 방지
+    df = yf.download(tickers, start=start_date, session=yf_session)
+    if 'Close' in df.columns: df = df['Close']
+    return df.dropna()
+
+@st.cache_data(ttl=14400)
+def load_fred_data():
+    start_date = (datetime.date.today() - datetime.timedelta(days=730)).strftime('%Y-%m-%d')
+    return web.DataReader("UNRATE", "fred", start_date)
+
+def get_baa_score(series, idx=-1):
+    return sum([(series.iloc[idx] - series.iloc[idx-m]) / series.iloc[idx-m] for m in [1, 3, 6, 9, 12]])
+
+def get_aaa_score(series, idx=-1):
+    return sum([(series.iloc[idx] - series.iloc[idx-m]) / series.iloc[idx-m] for m in [1, 3, 6]])
+
+
+def render_dashboard_rebalancer(strat_id, buy_dict):
+    """대시보드 하단 각 전략별 맞춤형 리밸런싱 계산기 랜더링 함수"""
+    st.write("#### 🧮 전략 맞춤형 실시간 리밸런싱 계산기")
+    
+    b_col1, b_col2 = st.columns([1, 3])
+    budget_key = f"budget_dash{strat_id}"
+    budget_str = b_col1.text_input("총 투자 운용 금액 (원)", key=budget_key, on_change=format_number_str, args=(budget_key,))
+    budget = safe_int(budget_str)
+    
+    df_list = []
+    for tkr, w in buy_dict.items():
+        price, _ = get_stock_info(tkr)
+        weight = float(w.replace('%', '')) if isinstance(w, str) else float(w)
+        df_list.append({
+            "Ticker": tkr,
+            "자산명": asset_names.get(tkr, tkr),
+            "목표비중(%)": weight,
+            "현재가(원)": int(price),
+            "보유수량(주)": 0
+        })
+        
+    if df_list:
+        base_df = pd.DataFrame(df_list)
+        st.caption("현재 보유중인 수량을 '보유수량(주)' 칸에 입력하시면 살 종목수(추가 매수/매도 수량)가 자동 계산됩니다.")
+        
+        edited_df = st.data_editor(base_df, disabled=["Ticker", "자산명", "목표비중(%)", "현재가(원)"], use_container_width=True, key=f"dash_edit_{strat_id}")
+        
+        res_df = edited_df.copy()
+        res_df["목표수량(주)"] = np.floor((budget * (res_df["목표비중(%)"]/100)) / res_df["현재가(원)"]).replace([np.inf, -np.inf, np.nan], 0)
+        res_df["살 종목수(주)"] = res_df["목표수량(주)"] - res_df["보유수량(주)"]
+        
+        def color_action(val):
+            color = 'green' if val > 0 else 'red' if val < 0 else 'gray'
+            return f'color: {color}; font-weight: bold;'
+            
+        styled_df = res_df.style.format({"현재가(원)": "{:,.0f}원", "보유수량(주)": "{:,.0f}주", "목표수량(주)": "{:,.0f}주", "살 종목수(주)": "{:,.0f}주"})
+        if hasattr(styled_df, "map"): styled_df = styled_df.map(color_action, subset=["살 종목수(주)"])
+        else: styled_df = styled_df.applymap(color_action, subset=["살 종목수(주)"])
+            
+        st.dataframe(styled_df, use_container_width=True)
 
 # ==========================================
 # 🎨 메인 타이틀 및 F&G 배너
@@ -252,11 +313,11 @@ st.markdown(banner_html, unsafe_allow_html=True)
 
 
 # ==========================================
-# 🧭 사이드바 및 공통 변수
+# 🧭 사이드바 설정
 # ==========================================
 st.sidebar.title("네비게이션")
 app_mode = st.sidebar.radio("원하시는 기능을 선택하세요:", ["🧮 프라이빗 투자 계산기", "📊 동적 자산배분 대시보드"])
-st.sidebar.caption("데이터 제공: Yahoo Finance, FRED, Naver, CNN, DART")
+st.sidebar.caption("데이터 제공: Yahoo Finance, FRED, Naver, DART, CNN")
 
 strat1_off = ["QQQ", "VEU", "VWO", "TLT", "IEF", "DBC", "VNQ"]
 strat1_def = ["IEF", "BIL"]
@@ -276,24 +337,6 @@ asset_names = {
 }
 
 all_tickers = list(set(strat1_off + strat1_def + strat2_off + strat2_def + laa_assets + strat4_off + strat4_def + ["TIP"]))
-
-@st.cache_data(ttl=14400)
-def load_financial_data(tickers):
-    start_date = (datetime.date.today() - datetime.timedelta(days=730)).strftime('%Y-%m-%d')
-    df = yf.download(tickers, start=start_date)
-    if 'Close' in df.columns: df = df['Close']
-    return df.dropna()
-
-@st.cache_data(ttl=14400)
-def load_fred_data():
-    start_date = (datetime.date.today() - datetime.timedelta(days=730)).strftime('%Y-%m-%d')
-    return web.DataReader("UNRATE", "fred", start_date)
-
-def get_baa_score(series, idx=-1):
-    return sum([(series.iloc[idx] - series.iloc[idx-m]) / series.iloc[idx-m] for m in [1, 3, 6, 9, 12]])
-
-def get_aaa_score(series, idx=-1):
-    return sum([(series.iloc[idx] - series.iloc[idx-m]) / series.iloc[idx-m] for m in [1, 3, 6]])
 
 
 # ==========================================
@@ -532,7 +575,7 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                     tickers_to_fetch = list(set(list(asset_weights.keys()) + ["SPY"]))
                     
                     try:
-                        bt_data = yf.download(tickers_to_fetch, start=bt_start, end=bt_end)
+                        bt_data = yf.download(tickers_to_fetch, start=bt_start, end=bt_end, session=yf_session)
                         if 'Close' in bt_data.columns:
                             bt_price = bt_data['Close']
                         else:
@@ -602,7 +645,6 @@ if app_mode == "🧮 프라이빗 투자 계산기":
         st.write("📊 **기업 가치 및 연평균 기대수익률(R) 스마트 연산기**")
         st.info("💡 종목을 검색하고 데이터 연동을 누르거나, **DART 재무제표 텍스트 파일**을 직접 올려서 더욱 정밀한 BPS 및 PBR, ROE를 추출할 수 있습니다.")
         
-        # 파일 업로더 추가
         uploaded_files = st.file_uploader("📁 DART 재무제표 텍스트(.txt) 업로드 (선택사항 / 다중 선택 가능)", type=['txt'], accept_multiple_files=True)
 
         def fetch_roe_data():
@@ -611,27 +653,30 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                 tkr = sel.split("(")[-1].replace(")", "").strip()
                 comp_name = sel.split("(")[0].strip()
                 
-                # 1. 파일이 있으면 DART 파일에서 데이터 우선 추출
                 file_pbr_bps_found = False
                 if uploaded_files:
                     eq_vals, ni_vals = parse_dart_files(uploaded_files, comp_name)
-                    if eq_vals[0] > 0:
-                        shares = yf.Ticker(tkr).info.get('sharesOutstanding', 0)
-                        price = float(yf.Ticker(tkr).history(period="1d")['Close'].iloc[-1])
-                        if shares > 0 and price > 0:
-                            bps = eq_vals[0] / shares
-                            st.session_state.ui_pbr = round(price / bps, 2)
-                            st.session_state.ui_price = price
-                            file_pbr_bps_found = True
+                    if eq_vals[0] != 0.0:
+                        code = tkr.split('.')[0] if '.' in tkr else tkr
+                        try:
+                            krx_df = fdr.StockListing('KRX')
+                            stock_row = krx_df[krx_df['Code'] == code]
+                            if not stock_row.empty:
+                                shares = float(stock_row['Stocks'].iloc[0])
+                                price = float(stock_row['Close'].iloc[0])
+                                if shares > 0 and price > 0:
+                                    bps = eq_vals[0] / shares
+                                    st.session_state.ui_pbr = round(price / bps, 2)
+                                    st.session_state.ui_price = price
+                                    file_pbr_bps_found = True
+                        except: pass
                         
-                        # ROE 계산
-                        valid_roes = [(n/e)*100 for e, n in zip(eq_vals, ni_vals) if e > 0 and n != 0]
+                        valid_roes = [(n/e)*100 for e, n in zip(eq_vals, ni_vals) if e != 0 and n != 0]
                         if valid_roes:
                             st.session_state.roe_val_3 = round(sum(valid_roes)/len(valid_roes), 2)
                             st.session_state.roe_val_5 = st.session_state.roe_val_3
                             st.session_state.roe_val_10 = st.session_state.roe_val_3
                 
-                # 2. 파일에서 못 찾았거나 파일이 없으면 인터넷 데이터 스크래핑 연동
                 if not file_pbr_bps_found:
                     pbr_v, roe3, roe5, roe10, price_v = get_pbr_roe_price(tkr)
                     st.session_state.roe_val_3 = round(roe3, 2)
@@ -712,80 +757,36 @@ if app_mode == "🧮 프라이빗 투자 계산기":
 # ==========================================
 # [모드 2] 📊 동적 자산배분 대시보드
 # ==========================================
-def render_dashboard_rebalancer(strat_id, buy_dict):
-    """대시보드 하단 각 전략별 맞춤형 리밸런싱 계산기 랜더링 함수"""
-    st.write("#### 🧮 전략 맞춤형 실시간 리밸런싱 계산기")
-    
-    b_col1, b_col2 = st.columns([1, 3])
-    budget_key = f"budget_dash{strat_id}"
-    budget_str = b_col1.text_input("총 투자 운용 금액 (원)", key=budget_key, on_change=format_number_str, args=(budget_key,))
-    budget = safe_int(budget_str)
-    
-    df_list = []
-    for tkr, w in buy_dict.items():
-        price, _ = get_stock_info(tkr)
-        weight = float(w.replace('%', '')) if isinstance(w, str) else float(w)
-        df_list.append({
-            "Ticker": tkr,
-            "자산명": asset_names.get(tkr, tkr),
-            "목표비중(%)": weight,
-            "현재가(원)": int(price),
-            "보유수량(주)": 0
-        })
-        
-    if df_list:
-        base_df = pd.DataFrame(df_list)
-        st.caption("현재 보유중인 수량을 '보유수량(주)' 칸에 입력하시면 살 종목수(추가 매수/매도 수량)가 자동 계산됩니다.")
-        
-        edited_df = st.data_editor(base_df, disabled=["Ticker", "자산명", "목표비중(%)", "현재가(원)"], use_container_width=True, key=f"dash_edit_{strat_id}")
-        
-        res_df = edited_df.copy()
-        res_df["목표수량(주)"] = np.floor((budget * (res_df["목표비중(%)"]/100)) / res_df["현재가(원)"]).replace([np.inf, -np.inf, np.nan], 0)
-        res_df["살 종목수(주)"] = res_df["목표수량(주)"] - res_df["보유수량(주)"]
-        
-        def color_action(val):
-            color = 'green' if val > 0 else 'red' if val < 0 else 'gray'
-            return f'color: {color}; font-weight: bold;'
+elif app_mode == "📊 동적 자산배분 대시보드":
+    st.subheader("💡 동적 자산배분 실시간 리밸런싱 대시보드")
+    try:
+        with st.spinner('금융 시장 데이터를 실시간 동기화 중입니다...'):
+            data = load_financial_data(all_tickers)
+            unrate_data = load_fred_data()
             
-        styled_df = res_df.style.format({"현재가(원)": "{:,.0f}원", "보유수량(주)": "{:,.0f}주", "목표수량(주)": "{:,.0f}주", "살 종목수(주)": "{:,.0f}주"})
-        if hasattr(styled_df, "map"): styled_df = styled_df.map(color_action, subset=["살 종목수(주)"])
-        else: styled_df = styled_df.applymap(color_action, subset=["살 종목수(주)"])
+        month_data = data.resample('ME').last()
+        
+        if len(month_data) < 14:
+            st.error("데이터가 부족합니다. (최소 14개월 필요)")
+        else:
+            st.write(f"📅 실시간 분석 기준일: **{month_data.index[-1].strftime('%Y년 %m월 %d일')}**")
             
-        st.dataframe(styled_df, use_container_width=True)
-
-
-    elif app_mode == "📊 동적 자산배분 대시보드":
-        st.subheader("💡 동적 자산배분 실시간 리밸런싱 대시보드")
-        try:
-            with st.spinner('금융 시장 데이터를 실시간 동기화 중입니다...'):
-                data = load_financial_data(all_tickers)
-                unrate_data = load_fred_data()
-                
-            month_data = data.resample('ME').last()
+            tab1, tab2, tab3, tab4 = st.tabs([
+                "📌 1. 밸런스 전략", "🚀 2. 미국밸런스 섹터 전략", 
+                "🛡️ 3. LAA 전략", "⚡ 4. 한국형가속자산배분전략"
+            ])
+            tip_score = get_baa_score(month_data["TIP"])
             
-            if len(month_data) < 14:
-                st.error("데이터가 부족합니다. (최소 14개월 필요)")
-            else:
-                st.write(f"📅 실시간 분석 기준일: **{month_data.index[-1].strftime('%Y년 %m월 %d일')}**")
-                
-                tab1, tab2, tab3, tab4 = st.tabs([
-                    "📌 1. 밸런스 전략", "🚀 2. 미국밸런스 섹터 전략", 
-                    "🛡️ 3. LAA 전략", "⚡ 4. 한국형가속자산배분전략"
-                ])
-            
-            # --- 탭 1. 밸런스 전략 ---
             with tab1:
                 col1, col2 = st.columns([1, 1])
                 buy1_prev, buy1_curr = {}, {}
                 
-                # 전월 계산
                 tip_prev = get_baa_score(month_data["TIP"], -2)
                 if tip_prev > 0:
                     for a in pd.Series({a: get_baa_score(month_data[a], -2) for a in strat1_off}).nlargest(4).index: buy1_prev[a] = "25.0%"
                 else:
                     buy1_prev[pd.Series({a: get_baa_score(month_data[a], -2) for a in strat1_def}).nlargest(1).index[0]] = "100.0%"
                     
-                # 당월 계산
                 tip_curr = get_baa_score(month_data["TIP"], -1)
                 if tip_curr > 0:
                     st.success(f"📈 [이번 달 시장 국면] 공격형 자산 매수장 (TIP 스코어: {tip_curr:.4f})")
@@ -804,7 +805,6 @@ def render_dashboard_rebalancer(strat_id, buy_dict):
                 st.divider()
                 render_dashboard_rebalancer("1", buy1_curr)
 
-            # --- 탭 2. 미국밸런스 섹터 전략 ---
             with tab2:
                 col3, col4 = st.columns([1, 1])
                 buy2_prev, buy2_curr = {}, {}
@@ -831,13 +831,11 @@ def render_dashboard_rebalancer(strat_id, buy_dict):
                 st.divider()
                 render_dashboard_rebalancer("2", buy2_curr)
 
-            # --- 탭 3. LAA 전략 ---
             with tab3:
                 col5, col6 = st.columns([1, 1])
                 buy3_prev = {"IWD": "25.0%", "GLD": "25.0%", "IEF": "25.0%"}
                 buy3_curr = {"IWD": "25.0%", "GLD": "25.0%", "IEF": "25.0%"}
                 
-                # 전월 LAA 판단
                 p_date = month_data.index[-2]
                 spy_prev = data[data.index <= p_date]['SPY'].iloc[-1]
                 spy_200_prev = data[data.index <= p_date]['SPY'].rolling(200).mean().iloc[-1]
@@ -848,7 +846,6 @@ def render_dashboard_rebalancer(strat_id, buy_dict):
                 if (spy_prev < spy_200_prev) and (ur_prev > ur_12_prev): buy3_prev["SHY"] = "25.0%"
                 else: buy3_prev["QQQ"] = "25.0%"
                 
-                # 당월 LAA 판단
                 spy_curr = data['SPY'].iloc[-1]
                 spy_200 = data['SPY'].rolling(200).mean().iloc[-1]
                 unrate_curr = unrate_data['UNRATE'].iloc[-1]
@@ -871,19 +868,16 @@ def render_dashboard_rebalancer(strat_id, buy_dict):
                 st.divider()
                 render_dashboard_rebalancer("3", buy3_curr)
 
-            # --- 탭 4. 한국형가속자산배분전략 ---
             with tab4:
                 col7, col8 = st.columns([1, 1])
                 buy4_prev, buy4_curr = {}, {}
                 
-                # 전월 AAA 판단
                 max_sc_prev = pd.Series({a: get_aaa_score(month_data[a], -2) for a in strat4_off}).max()
                 if max_sc_prev > 0:
                     buy4_prev[pd.Series({a: get_aaa_score(month_data[a], -2) for a in strat4_off}).nlargest(1).index[0]] = "100.0%"
                 else:
                     buy4_prev[pd.Series({a: month_data[a].iloc[-2]/month_data[a].iloc[-3] for a in strat4_def}).nlargest(1).index[0]] = "100.0%"
                     
-                # 당월 AAA 판단
                 aaa_scores_curr = pd.Series({a: get_aaa_score(month_data[a], -1) for a in strat4_off})
                 max_sc_curr = aaa_scores_curr.max()
                 if max_sc_curr > 0:
@@ -903,9 +897,8 @@ def render_dashboard_rebalancer(strat_id, buy_dict):
                 st.divider()
                 render_dashboard_rebalancer("4", buy4_curr)
 
-        except Exception as e:
-            st.error(f"오류가 발생했습니다: {e}")
-
+    except Exception as e:
+        st.error(f"오류가 발생했습니다: {e}")
 
 # ==========================================
 # ⚖️ 글로벌 법적 고지 및 면책사항 (Footer)
