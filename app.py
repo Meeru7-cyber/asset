@@ -14,7 +14,6 @@ st.set_page_config(page_title="프라이빗 통합 투자 플랫폼", layout="wi
 # 🧭 금액 콤마 처리용 안전 변환 함수 & 콜백
 # ==========================================
 def safe_int(val):
-    """콤마가 포함된 문자열을 안전하게 정수로 변환"""
     if isinstance(val, str):
         val = val.replace(",", "").strip()
     try:
@@ -23,7 +22,6 @@ def safe_int(val):
         return 0
 
 def format_number_str(key):
-    """텍스트 입력창에서 엔터를 치거나 포커스를 잃을 때 콤마를 찍어주는 콜백 함수"""
     val = str(st.session_state[key]).replace(",", "").strip()
     try:
         if val == "": 
@@ -33,13 +31,12 @@ def format_number_str(key):
     except ValueError:
         st.session_state[key] = "0"
 
-# 세션 상태 초기화 (투자금액 입력칸 기본값 세팅)
 if "budget_stock" not in st.session_state: st.session_state.budget_stock = "15,000,000"
 if "budget_idx" not in st.session_state: st.session_state.budget_idx = "15,000,000"
 if "budget_asset" not in st.session_state: st.session_state.budget_asset = "100,000,000"
 
 # ==========================================
-# 🧭 공통 기능: CNN Fear & Greed & 전체 종목 리스트 가져오기
+# 🧭 공통 기능: CNN Fear & Greed & 전체 종목 검색
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_fear_and_greed():
@@ -78,7 +75,6 @@ def get_all_search_options():
         "Apple (AAPL)", "Microsoft (MSFT)", "NVIDIA (NVDA)", "Tesla (TSLA)", "Alphabet (GOOGL)",
         "SPDR S&P 500 (SPY)", "Invesco QQQ (QQQ)", "iShares 20+ Year Treasury (TLT)", "Schwab US Dividend (SCHD)"
     ]
-    
     return ["직접 입력 (여기에 없는 종목)"] + sorted(all_kr) + us_majors
 
 @st.cache_data(ttl=600)
@@ -95,10 +91,10 @@ def get_stock_info(ticker):
         return 0.0, 0.0
 
 # ==========================================
-# 🎨 메인 타이틀 및 F&G 배너 
+# 🎨 메인 타이틀 및 F&G 배너
 # ==========================================
 st.markdown("<h1 style='text-align: center;'>📊 프라이빗 투자 계산기</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align: center; color: #8b90a8; margin-top: -10px; margin-bottom: 30px;'>물타기 · 지수분할 · 기대수익률 · 자산배분 통합 계산</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align: center; color: #8b90a8; margin-top: -10px; margin-bottom: 30px;'>물타기 · 지수분할 · 기대수익률 · 자산배분 · 백테스트 통합 계산</p>", unsafe_allow_html=True)
 
 fng_score, fng_rating = get_fear_and_greed()
 
@@ -129,12 +125,13 @@ st.markdown(banner_html, unsafe_allow_html=True)
 
 
 # ==========================================
-# 🧭 사이드바 및 공통 변수
+# 🧭 사이드바 설정
 # ==========================================
 st.sidebar.title("네비게이션")
 app_mode = st.sidebar.radio("원하시는 기능을 선택하세요:", ["📊 동적 자산배분 대시보드", "🧮 프라이빗 투자 계산기"])
 st.sidebar.caption("데이터 제공: Yahoo Finance, FRED, CNN")
 
+# (동적 자산배분 Ticker 등은 생략하지 않고 그대로 유지)
 strat1_off = ["QQQ", "VEU", "VWO", "TLT", "IEF", "DBC", "VNQ"]
 strat1_def = ["IEF", "BIL"]
 strat2_off = ["IBB", "IGV", "SKYY", "SOXX", "XLE", "XRT", "IEF", "DBC"]
@@ -278,8 +275,9 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
     
     SEARCH_OPTIONS = get_all_search_options()
     
-    tab_stock, tab_idx, tab_asset, tab_roe = st.tabs([
-        "📊 개별종목 물타기", "📉 지수 물타기", "🗂️ 자산배분 리밸런싱", "📈 기대수익률(R)"
+    # 신규: 자산배분 백테스트 탭 추가
+    tab_stock, tab_idx, tab_asset, tab_backtest, tab_roe = st.tabs([
+        "📊 개별종목 물타기", "📉 지수 물타기", "🗂️ 자산배분 리밸런싱", "⏳ 자산배분 백테스트", "📈 기대수익률(R)"
     ])
     
     # --- 1. 개별종목 물타기 ---
@@ -297,8 +295,6 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
         fetched_price, fetched_div = get_stock_info(stock_ticker) if stock_ticker else (0.0, 0.0)
         
         c1, c2, c3, c4 = st.columns(4)
-        
-        # 콜백(on_change) 적용되어 엔터 입력 시 자동으로 콤마 포맷팅 됨
         budget_str = c1.text_input("총 투자 금액 (원)", key="budget_stock", on_change=format_number_str, args=("budget_stock",))
         start_price_str = c2.text_input("1회차 매수 가격 (자동입력)", value=f"{int(fetched_price):,}" if fetched_price > 0 else "14,000")
         dividend_input_str = c3.text_input("예상 주당 배당금 (자동입력)", value=f"{int(fetched_div):,}")
@@ -362,7 +358,6 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
 
         i1, i2, i3, i4 = st.columns(4)
         
-        # 콜백(on_change) 적용
         idx_budget_str = i1.text_input("지수 총 투자 금액 (원)", key="budget_idx", on_change=format_number_str, args=("budget_idx",))
         idx_start_str = i2.text_input("첫 매수 지수/단가 (자동입력)", value=f"{int(fetched_idx_price):,}" if fetched_idx_price > 0 else "35,000")
         idx_drop = i3.number_input("구간별 하락률 (%)", value=5.0, step=0.5)
@@ -393,16 +388,15 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
     with tab_asset:
         st.write("포트폴리오 비중 조절 (리밸런싱) 계산기")
         
-        # 콜백(on_change) 적용
         total_asset_budget_str = st.text_input("총 투자 운용 금액 (원)", key="budget_asset", on_change=format_number_str, args=("budget_asset",))
         total_asset_budget = safe_int(total_asset_budget_str)
         
         if 'asset_df' not in st.session_state:
             st.session_state.asset_df = pd.DataFrame([
-                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "069500" in x), "직접 입력 (여기에 없는 종목)"), "현재가(원)": 35000, "목표비중(%)": 30.0, "보유수량(주)": 0},
-                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "360750" in x), "직접 입력 (여기에 없는 종목)"), "현재가(원)": 15000, "목표비중(%)": 30.0, "보유수량(주)": 0},
-                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "308620" in x), "직접 입력 (여기에 없는 종목)"), "현재가(원)": 11000, "목표비중(%)": 20.0, "보유수량(주)": 0},
-                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "411060" in x), "직접 입력 (여기에 없는 종목)"), "현재가(원)": 13000, "목표비중(%)": 20.0, "보유수량(주)": 0}
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "069500" in x), "직접 입력"), "현재가(원)": 35000, "목표비중(%)": 30.0, "보유수량(주)": 0},
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "360750" in x), "직접 입력"), "현재가(원)": 15000, "목표비중(%)": 30.0, "보유수량(주)": 0},
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "308620" in x), "직접 입력"), "현재가(원)": 11000, "목표비중(%)": 20.0, "보유수량(주)": 0},
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "411060" in x), "직접 입력"), "현재가(원)": 13000, "목표비중(%)": 20.0, "보유수량(주)": 0}
             ])
             
         column_config = {
@@ -432,7 +426,7 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
 
         total_ratio = edited_df["목표비중(%)"].sum()
         if total_ratio != 100:
-            st.error(f"목표 비중의 합이 100%가 아닙니다. (현재: {total_ratio}%) - 계산 결과가 정확하지 않을 수 있습니다.")
+            st.error(f"목표 비중의 합이 100%가 아닙니다. (현재: {total_ratio}%)")
             
         st.write("📊 **리밸런싱 실시간 연산 결과 (자동 연동)**")
         result_df = edited_df.copy()
@@ -451,7 +445,6 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
             "살 종목수(주)": "{:,.0f}주"
         })
         
-        # applymap 지원 종료(Pandas 최신 버전) 오류 방지용 로직
         if hasattr(styled_df, "map"):
             styled_df = styled_df.map(color_action, subset=["살 종목수(주)"])
         else:
@@ -459,7 +452,117 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
             
         st.dataframe(styled_df, use_container_width=True)
 
-    # --- 4. 기대수익률 (ROE/PBR) ---
+    # --- 4. 자산배분 백테스트 (신규 추가) ---
+    with tab_backtest:
+        st.write("과거 데이터를 기반으로 포트폴리오의 성과(CAGR, MDD, Sharpe)를 S&P500(SPY)과 비교 검증합니다.")
+        
+        # 날짜 설정
+        date_col1, date_col2 = st.columns(2)
+        bt_start = date_col1.date_input("백테스트 시작일", datetime.date.today() - datetime.timedelta(days=365*5))
+        bt_end = date_col2.date_input("백테스트 종료일", datetime.date.today())
+        
+        # 데이터 에디터 초기화
+        if 'bt_df' not in st.session_state:
+            st.session_state.bt_df = pd.DataFrame([
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "069500" in x), ""), "투입비중(%)": 60.0},
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "308620" in x), ""), "투입비중(%)": 40.0}
+            ])
+            
+        bt_config = {
+            "자산명 (선택)": st.column_config.SelectboxColumn("자산명 (클릭하여 전체 검색)", options=SEARCH_OPTIONS, width="large", required=True),
+            "투입비중(%)": st.column_config.NumberColumn("투입비중(%)", min_value=0.0, max_value=100.0)
+        }
+        
+        edited_bt = st.data_editor(st.session_state.bt_df, num_rows="dynamic", column_config=bt_config, use_container_width=True, key="bt_editor")
+        st.session_state.bt_df = edited_bt
+        
+        if st.button("🚀 백테스트 실행", type="primary"):
+            total_bt_ratio = edited_bt["투입비중(%)"].sum()
+            if total_bt_ratio != 100:
+                st.error(f"투입비중의 합이 100%가 아닙니다. (현재: {total_bt_ratio}%)")
+            else:
+                with st.spinner("과거 데이터를 불러오고 성과를 분석 중입니다..."):
+                    # 1. 딕셔너리로 자산/비중 구성
+                    asset_weights = {}
+                    for idx, row in edited_bt.iterrows():
+                        asset_str = row["자산명 (선택)"]
+                        w = row["투입비중(%)"] / 100.0
+                        if asset_str and "(" in asset_str:
+                            tkr = asset_str.split("(")[-1].replace(")", "").strip()
+                            # 동일 종목이 중복 입력되었을 경우 비중 합산
+                            asset_weights[tkr] = asset_weights.get(tkr, 0) + w
+                            
+                    # 벤치마크 SPY를 포함하여 다운로드 리스트 작성
+                    tickers_to_fetch = list(set(list(asset_weights.keys()) + ["SPY"]))
+                    
+                    try:
+                        # 2. 야후 파이낸스에서 데이터 다운로드
+                        bt_data = yf.download(tickers_to_fetch, start=bt_start, end=bt_end)
+                        if 'Close' in bt_data.columns:
+                            bt_price = bt_data['Close']
+                        else:
+                            bt_price = bt_data
+                            
+                        # 단일 종목(예: SPY 몰빵)일 경우 DataFrame으로 강제 변환
+                        if isinstance(bt_price, pd.Series):
+                            bt_price = bt_price.to_frame(tickers_to_fetch[0])
+                            
+                        # 한국 휴일/미국 휴일의 시차가 발생하므로 ffill(이전 가격 채우기) 후 처리
+                        bt_price = bt_price.ffill().dropna()
+                        
+                        # 3. 일간 수익률 연산
+                        daily_ret = bt_price.pct_change().dropna()
+                        
+                        # 내 포트폴리오 수익률 계산 (매일 리밸런싱 된다고 가정한 단순 가중합)
+                        port_ret = pd.Series(0.0, index=daily_ret.index)
+                        for tkr, weight in asset_weights.items():
+                            if tkr in daily_ret.columns:
+                                port_ret += daily_ret[tkr] * weight
+                                
+                        spy_ret = daily_ret["SPY"] if "SPY" in daily_ret.columns else pd.Series(0.0, index=daily_ret.index)
+                        
+                        # 누적 수익률 계산 (투자원금 100 기준)
+                        port_cum = (1 + port_ret).cumprod() * 100
+                        spy_cum = (1 + spy_ret).cumprod() * 100
+                        
+                        # 지표 산출 함수
+                        def get_metrics(rets, cums):
+                            days = len(rets)
+                            if days < 2: return 0, 0, 0
+                            years = days / 252
+                            # CAGR
+                            cagr = (cums.iloc[-1] / 100) ** (1 / years) - 1
+                            # MDD
+                            roll_max = cums.cummax()
+                            drawdowns = cums / roll_max - 1
+                            mdd = drawdowns.min()
+                            # Sharpe (무위험수익률 0 가정)
+                            sharpe = (rets.mean() / rets.std() * np.sqrt(252)) if rets.std() != 0 else 0
+                            return cagr, mdd, sharpe
+                            
+                        p_cagr, p_mdd, p_sharpe = get_metrics(port_ret, port_cum)
+                        s_cagr, s_mdd, s_sharpe = get_metrics(spy_ret, spy_cum)
+                        
+                        # 4. 결과 UI 출력
+                        st.divider()
+                        st.subheader("📊 백테스트 분석 결과")
+                        
+                        m1, m2, m3 = st.columns(3)
+                        m1.metric("연평균 수익률 (CAGR)", f"{p_cagr*100:.2f}%", f"SPY 벤치마크: {s_cagr*100:.2f}%")
+                        m2.metric("최대 낙폭 (MDD)", f"{p_mdd*100:.2f}%", f"SPY 벤치마크: {s_mdd*100:.2f}%", delta_color="inverse")
+                        m3.metric("위험조정수익률 (Sharpe)", f"{p_sharpe:.2f}", f"SPY 벤치마크: {s_sharpe:.2f}")
+                        
+                        st.write("📈 **누적 자산 추이 비교 (초기 투자금 100 기준)**")
+                        chart_df = pd.DataFrame({
+                            "내 포트폴리오": port_cum,
+                            "SPY (미국 S&P 500)": spy_cum
+                        })
+                        st.line_chart(chart_df)
+                        
+                    except Exception as e:
+                        st.error(f"백테스트 진행 중 오류가 발생했습니다. 종목 코드나 날짜 범위를 다시 확인해주세요. (사유: {e})")
+
+    # --- 5. 기대수익률 (ROE/PBR) ---
     with tab_roe:
         st.write("연평균 기대수익률(R) 역산 도출")
         st.latex(r"R = \frac{1 + ROE}{PBR^{\frac{1}{n}}} - 1")
@@ -475,3 +578,19 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
                 st.success(f"🎉 **도출된 연평균 기대수익률:** {exp_return:.2f}% (우수)")
             else:
                 st.info(f"📊 **도출된 연평균 기대수익률:** {exp_return:.2f}%")
+
+
+# ==========================================
+# ⚖️ 글로벌 법적 고지 및 면책사항 (Footer)
+# ==========================================
+st.divider()
+footer_html = """
+<div style='text-align: center; color: #8b90a8; font-size: 0.85em; padding: 20px 0; line-height: 1.6;'>
+    <strong>⚖️ 법적 고지 및 면책사항 (Disclaimer)</strong><br>
+    본 웹사이트(플랫폼)에서 제공하는 모든 정보, 데이터, 연산 결과는 투자 결정의 참고 용도로만 제공되며, 그 정확성이나 완전성을 보장하지 않습니다.<br>
+    야후 파이낸스(Yahoo Finance), FRED, CNN Fear & Greed 등 외부 통신망에서 제공되는 실시간 데이터는 시스템 환경에 따라 지연되거나 오류가 발생할 수 있습니다.<br>
+    본 플랫폼의 제작 및 제공자는 사용자의 투자 결과에 대해 어떠한 법적, 도의적 책임도 지지 않습니다.<br> 
+    <strong>모든 최종 투자 판단과 그에 따른 책임은 투자자 본인에게 있습니다.</strong>
+</div>
+"""
+st.markdown(footer_html, unsafe_allow_html=True)
