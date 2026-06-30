@@ -762,16 +762,16 @@ def render_dashboard_rebalancer(strat_id, buy_dict):
                 unrate_data = load_fred_data()
                 
             month_data = data.resample('ME').last()
-        
-        if len(month_data) < 14:
-            st.error("데이터가 부족합니다. (최소 14개월 필요)")
-        else:
-            st.write(f"📅 실시간 분석 기준일: **{month_data.index[-1].strftime('%Y년 %m월 %d일')}**")
             
-            tab1, tab2, tab3, tab4 = st.tabs([
-                "📌 1. 밸런스 전략", "🚀 2. 미국밸런스 섹터 전략", 
-                "🛡️ 3. LAA 전략", "⚡ 4. 한국형가속자산배분전략"
-            ])
+            if len(month_data) < 14:
+                st.error("데이터가 부족합니다. (최소 14개월 필요)")
+            else:
+                st.write(f"📅 실시간 분석 기준일: **{month_data.index[-1].strftime('%Y년 %m월 %d일')}**")
+                
+                tab1, tab2, tab3, tab4 = st.tabs([
+                    "📌 1. 밸런스 전략", "🚀 2. 미국밸런스 섹터 전략", 
+                    "🛡️ 3. LAA 전략", "⚡ 4. 한국형가속자산배분전략"
+                ])
             
             # --- 탭 1. 밸런스 전략 ---
             with tab1:
