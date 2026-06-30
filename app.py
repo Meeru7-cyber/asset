@@ -6,6 +6,7 @@ import yfinance as yf
 import pandas_datareader.data as web
 import requests
 import FinanceDataReader as fdr
+import io
 
 # 페이지 기본 설정
 st.set_page_config(page_title="프라이빗 통합 투자 플랫폼", layout="wide")
@@ -34,6 +35,10 @@ def format_number_str(key):
 if "budget_stock" not in st.session_state: st.session_state.budget_stock = "15,000,000"
 if "budget_idx" not in st.session_state: st.session_state.budget_idx = "15,000,000"
 if "budget_asset" not in st.session_state: st.session_state.budget_asset = "100,000,000"
+if "budget_dash1" not in st.session_state: st.session_state.budget_dash1 = "100,000,000"
+if "budget_dash2" not in st.session_state: st.session_state.budget_dash2 = "100,000,000"
+if "budget_dash3" not in st.session_state: st.session_state.budget_dash3 = "100,000,000"
+if "budget_dash4" not in st.session_state: st.session_state.budget_dash4 = "100,000,000"
 
 # ROE/PBR 실시간 연동을 위한 UI 상태 초기화
 if "ui_pbr" not in st.session_state: st.session_state.ui_pbr = 1.20
@@ -44,7 +49,52 @@ if "roe_val_5" not in st.session_state: st.session_state.roe_val_5 = 15.0
 if "roe_val_10" not in st.session_state: st.session_state.roe_val_10 = 15.0
 
 # ==========================================
-# 🧭 공통 기능: CNN Fear & Greed & 전체 종목 검색 (미국 확장)
+# 🧭 DART 재무제표 파일 파싱 함수 (BPS, ROE)
+# ==========================================
+def parse_dart_files(files, comp_name):
+    """업로드된 DART txt 파일에서 자본총계와 당기순이익 추출"""
+    eq = [0.0, 0.0, 0.0] # 당기, 전기, 전전기 자본총계
+    ni = [0.0, 0.0, 0.0] # 당기, 전기, 전전기 당기순이익
+    
+    for f in files:
+        try:
+            df = pd.read_csv(f, sep='\t', encoding='utf-8')
+        except:
+            f.seek(0)
+            try:
+                df = pd.read_csv(f, sep='\t', encoding='cp949')
+            except:
+                continue
+
+        if '회사명' not in df.columns or '항목명' not in df.columns:
+            continue
+
+        # 검색된 회사명 필터링
+        cdf = df[df['회사명'].astype(str).str.contains(comp_name, na=False)]
+        if cdf.empty: continue
+
+        # 1. 자본총계 찾기 (재무상태표)
+        eq_rows = cdf[cdf['항목명'].astype(str).str.contains('자본총계', na=False)]
+        if not eq_rows.empty:
+            for i, col in enumerate(['당기', '전기', '전전기']):
+                if col in eq_rows.columns:
+                    v = str(eq_rows.iloc[0][col]).replace(',', '').strip()
+                    if v.replace('-', '').replace('.', '').isdigit():
+                        eq[i] = float(v)
+
+        # 2. 당기순이익 찾기 (손익계산서)
+        ni_rows = cdf[cdf['항목명'].astype(str).str.contains('당기순이익', na=False)]
+        if not ni_rows.empty:
+            for i, col in enumerate(['당기', '전기', '전전기']):
+                if col in ni_rows.columns:
+                    v = str(ni_rows.iloc[0][col]).replace(',', '').strip()
+                    if v.replace('-', '').replace('.', '').isdigit():
+                        ni[i] = float(v)
+                        
+    return eq, ni
+
+# ==========================================
+# 🧭 공통 기능: CNN Fear & Greed & 전체 종목 검색
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_fear_and_greed():
@@ -79,38 +129,20 @@ def get_all_search_options():
         nasdaq_list = (nasdaq['Name'] + " (" + nasdaq['Symbol'] + ")").tolist()
         nyse = fdr.StockListing('NYSE')
         nyse_list = (nyse['Name'] + " (" + nyse['Symbol'] + ")").tolist()
-        
         all_auto = list(set(kospi_list + kosdaq_list + etf_list + sp500_list + nasdaq_list + nyse_list))
     except:
         all_auto = ["삼성전자 (005930.KS)", "KODEX 200 (069500.KS)", "TIGER 미국나스닥100 (133690.KS)", "Apple (AAPL)"]
         
-    # 검색이 누락되기 쉬운 미국 주요 레버리지, 원자재, 지수 ETF 집중 추가
     us_etfs_and_commodities = [
-        # 지수 및 벤치마크 (VOO, QQQM 등 추가)
-        "SPDR S&P 500 ETF (SPY)", "Invesco QQQ Trust (QQQ)", "Vanguard S&P 500 ETF (VOO)", 
-        "Invesco NASDAQ 100 ETF (QQQM)", "Vanguard Total Stock Market (VTI)", "SPDR Dow Jones Industrial Average (DIA)", 
-        "iShares Russell 2000 (IWM)", "Vanguard Total World Stock (VT)",
-        # 채권
-        "iShares 20+ Year Treasury Bond (TLT)", "iShares 7-10 Year Treasury Bond (IEF)", "iShares 1-3 Year Treasury Bond (SHY)", 
-        "SPDR Bloomberg 1-3 Month T-Bill (BIL)", "iShares Core US Aggregate Bond (AGG)", "iShares TIPS Bond ETF (TIP)",
-        # 레버리지 및 인버스 (QLD 등 추가)
+        "SPDR S&P 500 ETF (SPY)", "Invesco QQQ Trust (QQQ)", "Vanguard S&P 500 ETF (VOO)", "Invesco NASDAQ 100 ETF (QQQM)",
+        "Vanguard Total Stock Market (VTI)", "iShares 20+ Year Treasury Bond (TLT)", "iShares 7-10 Year Treasury Bond (IEF)", 
+        "iShares 1-3 Year Treasury Bond (SHY)", "SPDR Bloomberg 1-3 Month T-Bill (BIL)", 
         "ProShares Ultra QQQ (QLD)", "ProShares UltraPro QQQ (TQQQ)", "ProShares UltraPro Short QQQ (SQQQ)",
         "Direxion Daily Semiconductor Bull 3X (SOXL)", "Direxion Daily Semiconductor Bear 3X (SOXS)",
-        "MicroSectors FANG+ Index 3X Leveraged (FNGU)", "MicroSectors FANG+ Index -3X Inverse (FNGD)",
-        "MicroSectors FANG & Innovation 3X Leveraged (BULZ)", "ProShares UltraPro S&P500 (UPRO)",
-        "Direxion Daily 20+ Year Treasury Bull 3X (TMF)", "Direxion Daily 20+ Year Treasury Bear 3X (TMV)",
-        "GraniteShares 2x Long NVDA Daily (NVDL)", "Direxion Daily TSLA Bull 2X Shares (TSLL)",
-        # 원자재 및 금속
-        "SPDR Gold Shares (GLD)", "iShares Gold Trust (IAU)", "iShares Silver Trust (SLV)", 
-        "Invesco DB Commodity Tracking (DBC)", "United States Oil Fund (USO)", "ProShares Ultra Bloomberg Natural Gas (BOIL)",
-        "Global X Copper Miners ETF (COPX)", "Global X Lithium & Battery Tech ETF (LIT)", "Global X Uranium ETF (URA)",
-        # 섹터 및 테마
+        "SPDR Gold Shares (GLD)", "Invesco DB Commodity Tracking (DBC)", "United States Oil Fund (USO)", 
         "Technology Select Sector SPDR (XLK)", "Health Care Select Sector SPDR (XLV)", "Financial Select Sector SPDR (XLF)", 
-        "Energy Select Sector SPDR (XLE)", "Vanguard Real Estate Index Fund (VNQ)", "iShares Semiconductor ETF (SOXX)", 
-        "VanEck Semiconductor ETF (SMH)", "iShares Biotechnology ETF (IBB)", "First Trust Cloud Computing (SKYY)", 
-        "Schwab US Dividend Equity ETF (SCHD)", "iShares Russell 1000 Value ETF (IWD)", "Vanguard FTSE Emerging Markets (VWO)"
+        "iShares Semiconductor ETF (SOXX)", "VanEck Semiconductor ETF (SMH)", "Schwab US Dividend Equity ETF (SCHD)"
     ]
-    
     combined = list(set(all_auto + us_etfs_and_commodities))
     return ["직접 입력 (여기에 없는 종목)"] + sorted(combined)
 
@@ -129,14 +161,13 @@ def get_stock_info(ticker):
 
 @st.cache_data(ttl=3600)
 def get_pbr_roe_price(ticker):
-    """현재 주가, PBR(네이버 금융 최우선 연동), 3년/5년/10년 평균 ROE 추출"""
+    """현재 주가, PBR, 3년/5년/10년 평균 ROE 추출 (인터넷 동기화용)"""
     if not ticker or "직접 입력" in ticker: return 0.0, 0.0, 0.0, 0.0, 0.0
     try:
         t = yf.Ticker(ticker)
         hist = t.history(period="1d")
         price = float(hist['Close'].iloc[-1]) if not hist.empty else 0.0
         
-        # 1. PBR 강제 정확도 확보 (한국 주식은 네이버 실시간 API 최우선 참조)
         pbr = 0.0
         if ticker.endswith('.KS') or ticker.endswith('.KQ'):
             code = ticker.split('.')[0]
@@ -155,13 +186,12 @@ def get_pbr_roe_price(ticker):
         
         if not pbr or pbr <= 0: pbr = 1.0
         
-        # 2. 재무제표 기반 ROE 최대 10년치 스캔
         roes = []
         try:
             inc = t.financials
             bs = t.balance_sheet
             ni_keys = ['Net Income', 'NetIncome', 'Net Income Common Stockholders']
-            eq_keys = ['Stockholders Equity', 'Total Stockholder Equity', 'Total Equity Gross Minority Interest']
+            eq_keys = ['Stockholders Equity', 'Total Stockholder Equity']
             
             ni_row, eq_row = None, None
             for k in ni_keys:
@@ -186,7 +216,6 @@ def get_pbr_roe_price(ticker):
         return float(pbr), float(avg_roe_3), float(avg_roe_5), float(avg_roe_10), float(price)
     except:
         return 1.0, 0.0, 0.0, 0.0, 0.0
-
 
 # ==========================================
 # 🎨 메인 타이틀 및 F&G 배너
@@ -223,11 +252,11 @@ st.markdown(banner_html, unsafe_allow_html=True)
 
 
 # ==========================================
-# 🧭 사이드바 설정
+# 🧭 사이드바 및 공통 변수
 # ==========================================
 st.sidebar.title("네비게이션")
 app_mode = st.sidebar.radio("원하시는 기능을 선택하세요:", ["🧮 프라이빗 투자 계산기", "📊 동적 자산배분 대시보드"])
-st.sidebar.caption("데이터 제공: Yahoo Finance, FRED, Naver, CNN")
+st.sidebar.caption("데이터 제공: Yahoo Finance, FRED, Naver, CNN, DART")
 
 strat1_off = ["QQQ", "VEU", "VWO", "TLT", "IEF", "DBC", "VNQ"]
 strat1_def = ["IEF", "BIL"]
@@ -268,11 +297,11 @@ def get_aaa_score(series, idx=-1):
 
 
 # ==========================================
-# [모드 1] 🧮 프라이빗 투자 계산기
+# [모드 1] 🧮 프라이빗 투자 계산기 
 # ==========================================
 if app_mode == "🧮 프라이빗 투자 계산기":
     
-    with st.spinner("미국 및 한국의 글로벌 종목 데이터를 동기화 중입니다..."):
+    with st.spinner("글로벌 종목 데이터를 동기화 중입니다..."):
         SEARCH_OPTIONS = get_all_search_options()
     
     tab_stock, tab_idx, tab_asset, tab_backtest, tab_roe = st.tabs([
@@ -296,19 +325,8 @@ if app_mode == "🧮 프라이빗 투자 계산기":
         
         c1, c2, c3, c4 = st.columns(4)
         budget_str = c1.text_input("총 투자 금액 (원)", key="budget_stock", on_change=format_number_str, args=("budget_stock",))
-        
-        start_price_str = c2.text_input(
-            "1회차 매수 가격 (자동입력)", 
-            value=f"{int(fetched_price):,}" if fetched_price > 0 else "", 
-            placeholder="안 나오면 수동 입력",
-            key=f"sp_{stock_ticker}"
-        )
-        dividend_input_str = c3.text_input(
-            "예상 주당 배당금 (자동입력)", 
-            value=f"{int(fetched_div):,}" if fetched_div > 0 else "0",
-            placeholder="안 나오면 수동 입력",
-            key=f"div_{stock_ticker}"
-        )
+        start_price_str = c2.text_input("1회차 매수 가격 (자동입력)", value=f"{int(fetched_price):,}" if fetched_price > 0 else "", placeholder="수동 입력", key=f"sp_{stock_ticker}")
+        dividend_input_str = c3.text_input("예상 주당 배당금 (자동입력)", value=f"{int(fetched_div):,}" if fetched_div > 0 else "0", key=f"div_{stock_ticker}")
         steps = c4.number_input("분할 횟수", min_value=2, max_value=20, value=5)
         
         budget = safe_int(budget_str)
@@ -374,12 +392,7 @@ if app_mode == "🧮 프라이빗 투자 계산기":
         i1, i2, i3, i4 = st.columns(4)
         
         idx_budget_str = i1.text_input("지수 총 투자 금액 (원)", key="budget_idx", on_change=format_number_str, args=("budget_idx",))
-        idx_start_str = i2.text_input(
-            "첫 매수 지수/단가 (자동입력)", 
-            value=f"{int(fetched_idx_price):,}" if fetched_idx_price > 0 else "",
-            placeholder="안 나오면 수동 입력",
-            key=f"idx_p_{idx_ticker}"
-        )
+        idx_start_str = i2.text_input("첫 매수 지수/단가 (자동입력)", value=f"{int(fetched_idx_price):,}" if fetched_idx_price > 0 else "", placeholder="수동 입력", key=f"idx_p_{idx_ticker}")
         idx_drop = i3.number_input("구간별 하락률 (%)", value=5.0, step=0.5)
         idx_steps = i4.number_input("지수 분할 횟수", min_value=2, max_value=20, value=5)
         
@@ -584,28 +597,49 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                     except Exception as e:
                         st.error(f"백테스트 진행 중 오류가 발생했습니다. 종목 코드나 날짜 범위를 다시 확인해주세요. (사유: {e})")
 
-    # --- 5. 기대수익률 (ROE/PBR) 스마트 가치평가 ---
+    # --- 5. 기대수익률 (ROE/PBR) 스마트 가치평가 및 DART 연동 ---
     with tab_roe:
         st.write("📊 **기업 가치 및 연평균 기대수익률(R) 스마트 연산기**")
-        st.info("💡 종목을 검색하고 '데이터 연동' 버튼을 누르면 최근 3년 재무 데이터를 기반으로 **현재 PBR, 최근 평균 ROE, 주가**를 긁어옵니다.")
+        st.info("💡 종목을 검색하고 데이터 연동을 누르거나, **DART 재무제표 텍스트 파일**을 직접 올려서 더욱 정밀한 BPS 및 PBR, ROE를 추출할 수 있습니다.")
         
-        # 콜백을 사용한 데이터 강제 연동 (key를 통한 세션 상태 직접 업데이트)
+        # 파일 업로더 추가
+        uploaded_files = st.file_uploader("📁 DART 재무제표 텍스트(.txt) 업로드 (선택사항 / 다중 선택 가능)", type=['txt'], accept_multiple_files=True)
+
         def fetch_roe_data():
             sel = st.session_state.get("roe_search_box", "")
             if sel and "직접 입력" not in sel:
                 tkr = sel.split("(")[-1].replace(")", "").strip()
-                pbr_v, roe3, roe5, roe10, price_v = get_pbr_roe_price(tkr)
+                comp_name = sel.split("(")[0].strip()
                 
-                # 내부 연산용 데이터 저장
-                st.session_state.roe_val_3 = round(roe3, 2)
-                st.session_state.roe_val_5 = round(roe5, 2)
-                st.session_state.roe_val_10 = round(roe10, 2)
+                # 1. 파일이 있으면 DART 파일에서 데이터 우선 추출
+                file_pbr_bps_found = False
+                if uploaded_files:
+                    eq_vals, ni_vals = parse_dart_files(uploaded_files, comp_name)
+                    if eq_vals[0] > 0:
+                        shares = yf.Ticker(tkr).info.get('sharesOutstanding', 0)
+                        price = float(yf.Ticker(tkr).history(period="1d")['Close'].iloc[-1])
+                        if shares > 0 and price > 0:
+                            bps = eq_vals[0] / shares
+                            st.session_state.ui_pbr = round(price / bps, 2)
+                            st.session_state.ui_price = price
+                            file_pbr_bps_found = True
+                        
+                        # ROE 계산
+                        valid_roes = [(n/e)*100 for e, n in zip(eq_vals, ni_vals) if e > 0 and n != 0]
+                        if valid_roes:
+                            st.session_state.roe_val_3 = round(sum(valid_roes)/len(valid_roes), 2)
+                            st.session_state.roe_val_5 = st.session_state.roe_val_3
+                            st.session_state.roe_val_10 = st.session_state.roe_val_3
                 
-                # UI 위젯 직접 업데이트
-                st.session_state.ui_pbr = round(pbr_v, 2) if pbr_v > 0 else 1.0
-                st.session_state.ui_price = float(price_v)
+                # 2. 파일에서 못 찾았거나 파일이 없으면 인터넷 데이터 스크래핑 연동
+                if not file_pbr_bps_found:
+                    pbr_v, roe3, roe5, roe10, price_v = get_pbr_roe_price(tkr)
+                    st.session_state.roe_val_3 = round(roe3, 2)
+                    st.session_state.roe_val_5 = round(roe5, 2)
+                    st.session_state.roe_val_10 = round(roe10, 2)
+                    st.session_state.ui_pbr = round(pbr_v, 2) if pbr_v > 0 else 1.0
+                    st.session_state.ui_price = float(price_v)
                 
-                # 현재 선택된 드롭다운에 맞춰 UI_ROE 업데이트
                 period = st.session_state.get("roe_period_box", "3년 평균 ROE")
                 if period == "3년 평균 ROE": st.session_state.ui_roe = st.session_state.roe_val_3
                 elif period == "5년 평균 ROE": st.session_state.ui_roe = st.session_state.roe_val_5
@@ -634,20 +668,15 @@ if app_mode == "🧮 프라이빗 투자 계산기":
         curr_price = r4.number_input("현재 주가 (참고용)", step=100.0, key="ui_price")
         
         if pbr > 0 and n_years > 0:
-            # 1. 10년 후 가치 = BPS * (1+ROE)^n
             bps = curr_price / pbr if curr_price > 0 else 0
             future_value = bps * ((1 + (roe/100)) ** n_years)
-            
-            # 2. 가치 승수 (미래 가치 / 현재가)
             value_multiplier = future_value / curr_price if curr_price > 0 else 0
             
-            # 3. 연평균 기대수익률 (10^(LOG10(가치승수)/n)-1)
             if value_multiplier > 0:
                 exp_return = (10 ** (np.log10(value_multiplier) / n_years) - 1) * 100
             else:
                 exp_return = 0
                 
-            # 4. 기대수익률 15% 이상을 위한 매수가격 계산
             target_buy_price = future_value / ((1 + 0.15) ** n_years)
             
             st.markdown("### 🎯 **핵심 가치평가 분석 리포트**")
@@ -662,8 +691,6 @@ if app_mode == "🧮 프라이빗 투자 계산기":
             
             if curr_price > 0 and bps > 0:
                 discount_rate = (target_buy_price / curr_price - 1) * 100
-                
-                # 완전 검정색 및 두꺼운 폰트를 적용한 고대비 테마 박스
                 st.markdown(f"""
                 <div style="background-color: #f8f9fa; border-left: 6px solid #2ecc71; padding: 20px 24px; border-radius: 8px; margin-top: 10px; border-top: 1px solid #e0e0e0; border-right: 1px solid #e0e0e0; border-bottom: 1px solid #e0e0e0;">
                     <span style="font-size: 1.1em; color: #000000; font-weight: 700;">💡 연 15% 복리 수익률을 확보하기 위한 <span style="color:#1e8449;">최대 목표 매수가</span>:</span><br>
@@ -672,7 +699,6 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                 </div>
                 """, unsafe_allow_html=True)
 
-            # 5. 투자 시 우려되는 점 자동 분석
             risks = []
             if pbr >= 3.0: risks.append("⚠️ **고평가 우려:** 현재 PBR이 3배 이상으로 자산 대비 주가 프리미엄이 높게 형성되어 있습니다.")
             if roe < 10.0: risks.append("⚠️ **수익성 부족:** 장기 평균 ROE가 10% 미만으로 자본 효율성이 다소 떨어지는 추세입니다.")
@@ -686,6 +712,48 @@ if app_mode == "🧮 프라이빗 투자 계산기":
 # ==========================================
 # [모드 2] 📊 동적 자산배분 대시보드
 # ==========================================
+def render_dashboard_rebalancer(strat_id, buy_dict):
+    """대시보드 하단 각 전략별 맞춤형 리밸런싱 계산기 랜더링 함수"""
+    st.write("#### 🧮 전략 맞춤형 실시간 리밸런싱 계산기")
+    
+    b_col1, b_col2 = st.columns([1, 3])
+    budget_key = f"budget_dash{strat_id}"
+    budget_str = b_col1.text_input("총 투자 운용 금액 (원)", key=budget_key, on_change=format_number_str, args=(budget_key,))
+    budget = safe_int(budget_str)
+    
+    df_list = []
+    for tkr, w in buy_dict.items():
+        price, _ = get_stock_info(tkr)
+        weight = float(w.replace('%', '')) if isinstance(w, str) else float(w)
+        df_list.append({
+            "Ticker": tkr,
+            "자산명": asset_names.get(tkr, tkr),
+            "목표비중(%)": weight,
+            "현재가(원)": int(price),
+            "보유수량(주)": 0
+        })
+        
+    if df_list:
+        base_df = pd.DataFrame(df_list)
+        st.caption("현재 보유중인 수량을 '보유수량(주)' 칸에 입력하시면 살 종목수(추가 매수/매도 수량)가 자동 계산됩니다.")
+        
+        edited_df = st.data_editor(base_df, disabled=["Ticker", "자산명", "목표비중(%)", "현재가(원)"], use_container_width=True, key=f"dash_edit_{strat_id}")
+        
+        res_df = edited_df.copy()
+        res_df["목표수량(주)"] = np.floor((budget * (res_df["목표비중(%)"]/100)) / res_df["현재가(원)"]).replace([np.inf, -np.inf, np.nan], 0)
+        res_df["살 종목수(주)"] = res_df["목표수량(주)"] - res_df["보유수량(주)"]
+        
+        def color_action(val):
+            color = 'green' if val > 0 else 'red' if val < 0 else 'gray'
+            return f'color: {color}; font-weight: bold;'
+            
+        styled_df = res_df.style.format({"현재가(원)": "{:,.0f}원", "보유수량(주)": "{:,.0f}주", "목표수량(주)": "{:,.0f}주", "살 종목수(주)": "{:,.0f}주"})
+        if hasattr(styled_df, "map"): styled_df = styled_df.map(color_action, subset=["살 종목수(주)"])
+        else: styled_df = styled_df.applymap(color_action, subset=["살 종목수(주)"])
+            
+        st.dataframe(styled_df, use_container_width=True)
+
+
 elif app_mode == "📊 동적 자산배분 대시보드":
     st.subheader("💡 동적 자산배분 실시간 리밸런싱 대시보드")
     try:
@@ -695,8 +763,8 @@ elif app_mode == "📊 동적 자산배분 대시보드":
             
         month_data = data.resample('ME').last()
         
-        if len(month_data) < 13:
-            st.error("데이터가 부족합니다.")
+        if len(month_data) < 14:
+            st.error("데이터가 부족합니다. (최소 14개월 필요)")
         else:
             st.write(f"📅 실시간 분석 기준일: **{month_data.index[-1].strftime('%Y년 %m월 %d일')}**")
             
@@ -704,78 +772,136 @@ elif app_mode == "📊 동적 자산배분 대시보드":
                 "📌 1. 밸런스 전략", "🚀 2. 미국밸런스 섹터 전략", 
                 "🛡️ 3. LAA 전략", "⚡ 4. 한국형가속자산배분전략"
             ])
-            tip_score = get_baa_score(month_data["TIP"])
             
+            # --- 탭 1. 밸런스 전략 ---
             with tab1:
-                col1, col2 = st.columns([1, 2])
-                buy1 = {}
-                with col1:
-                    st.metric("🎗️ TIP 스코어", f"{tip_score:.4f}")
-                    if tip_score > 0:
-                        st.success("📈 공격형 자산 매수장")
-                        top4 = pd.Series({a: get_baa_score(month_data[a]) for a in strat1_off}).nlargest(4)
-                        for a in top4.index: buy1[a] = "25.0%"
-                    else:
-                        st.warning("📉 방어형 안전자산 대피장")
-                        top1 = pd.Series({a: get_baa_score(month_data[a]) for a in strat1_def}).nlargest(1)
-                        buy1[top1.index[0]] = "100.0%"
-                with col2:
-                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy1.items()]))
-
-            with tab2:
-                col3, col4 = st.columns([1, 2])
-                buy2 = {}
-                with col3:
-                    st.metric("🎗️ TIP 스코어", f"{tip_score:.4f}")
-                    if tip_score > 0:
-                        st.success("📈 공격형 자산 매수장")
-                        top4 = pd.Series({a: get_baa_score(month_data[a]) for a in strat2_off}).nlargest(4)
-                        for a in top4.index: buy2[a] = "25.0%"
-                    else:
-                        st.warning("📉 방어형 안전자산 대피장")
-                        top1 = pd.Series({a: get_baa_score(month_data[a]) for a in strat2_def}).nlargest(1)
-                        buy2[top1.index[0]] = "100.0%"
-                with col4:
-                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy2.items()]))
-
-            with tab3:
-                col5, col6 = st.columns([1, 2])
-                buy3 = {"IWD": "25.0%", "GLD": "25.0%", "IEF": "25.0%"}
+                col1, col2 = st.columns([1, 1])
+                buy1_prev, buy1_curr = {}, {}
                 
+                # 전월 계산
+                tip_prev = get_baa_score(month_data["TIP"], -2)
+                if tip_prev > 0:
+                    for a in pd.Series({a: get_baa_score(month_data[a], -2) for a in strat1_off}).nlargest(4).index: buy1_prev[a] = "25.0%"
+                else:
+                    buy1_prev[pd.Series({a: get_baa_score(month_data[a], -2) for a in strat1_def}).nlargest(1).index[0]] = "100.0%"
+                    
+                # 당월 계산
+                tip_curr = get_baa_score(month_data["TIP"], -1)
+                if tip_curr > 0:
+                    st.success(f"📈 [이번 달 시장 국면] 공격형 자산 매수장 (TIP 스코어: {tip_curr:.4f})")
+                    for a in pd.Series({a: get_baa_score(month_data[a], -1) for a in strat1_off}).nlargest(4).index: buy1_curr[a] = "25.0%"
+                else:
+                    st.warning(f"📉 [이번 달 시장 국면] 방어형 안전자산 대피장 (TIP 스코어: {tip_curr:.4f})")
+                    buy1_curr[pd.Series({a: get_baa_score(month_data[a], -1) for a in strat1_def}).nlargest(1).index[0]] = "100.0%"
+                
+                with col1:
+                    st.write(f"🔙 **지난달 투자 비중 ({month_data.index[-2].strftime('%m월')} 기준)**")
+                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy1_prev.items()]))
+                with col2:
+                    st.write(f"🎯 **이번 달 목표 비중 ({month_data.index[-1].strftime('%m월')} 기준)**")
+                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy1_curr.items()]))
+                    
+                st.divider()
+                render_dashboard_rebalancer("1", buy1_curr)
+
+            # --- 탭 2. 미국밸런스 섹터 전략 ---
+            with tab2:
+                col3, col4 = st.columns([1, 1])
+                buy2_prev, buy2_curr = {}, {}
+                
+                if tip_prev > 0:
+                    for a in pd.Series({a: get_baa_score(month_data[a], -2) for a in strat2_off}).nlargest(4).index: buy2_prev[a] = "25.0%"
+                else:
+                    buy2_prev[pd.Series({a: get_baa_score(month_data[a], -2) for a in strat2_def}).nlargest(1).index[0]] = "100.0%"
+                    
+                if tip_curr > 0:
+                    st.success(f"📈 [이번 달 시장 국면] 공격형 자산 매수장 (TIP 스코어: {tip_curr:.4f})")
+                    for a in pd.Series({a: get_baa_score(month_data[a], -1) for a in strat2_off}).nlargest(4).index: buy2_curr[a] = "25.0%"
+                else:
+                    st.warning(f"📉 [이번 달 시장 국면] 방어형 안전자산 대피장 (TIP 스코어: {tip_curr:.4f})")
+                    buy2_curr[pd.Series({a: get_baa_score(month_data[a], -1) for a in strat2_def}).nlargest(1).index[0]] = "100.0%"
+                
+                with col3:
+                    st.write(f"🔙 **지난달 투자 비중 ({month_data.index[-2].strftime('%m월')} 기준)**")
+                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy2_prev.items()]))
+                with col4:
+                    st.write(f"🎯 **이번 달 목표 비중 ({month_data.index[-1].strftime('%m월')} 기준)**")
+                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy2_curr.items()]))
+                    
+                st.divider()
+                render_dashboard_rebalancer("2", buy2_curr)
+
+            # --- 탭 3. LAA 전략 ---
+            with tab3:
+                col5, col6 = st.columns([1, 1])
+                buy3_prev = {"IWD": "25.0%", "GLD": "25.0%", "IEF": "25.0%"}
+                buy3_curr = {"IWD": "25.0%", "GLD": "25.0%", "IEF": "25.0%"}
+                
+                # 전월 LAA 판단
+                p_date = month_data.index[-2]
+                spy_prev = data[data.index <= p_date]['SPY'].iloc[-1]
+                spy_200_prev = data[data.index <= p_date]['SPY'].rolling(200).mean().iloc[-1]
+                ur_prev_df = unrate_data[unrate_data.index <= p_date]
+                ur_prev = ur_prev_df['UNRATE'].iloc[-1]
+                ur_12_prev = ur_prev_df['UNRATE'].rolling(12).mean().iloc[-1]
+                
+                if (spy_prev < spy_200_prev) and (ur_prev > ur_12_prev): buy3_prev["SHY"] = "25.0%"
+                else: buy3_prev["QQQ"] = "25.0%"
+                
+                # 당월 LAA 판단
                 spy_curr = data['SPY'].iloc[-1]
                 spy_200 = data['SPY'].rolling(200).mean().iloc[-1]
                 unrate_curr = unrate_data['UNRATE'].iloc[-1]
                 unrate_12 = unrate_data['UNRATE'].rolling(12).mean().iloc[-1]
                 
-                cond1 = spy_curr < spy_200
-                cond2 = unrate_curr > unrate_12
+                if (spy_curr < spy_200) and (unrate_curr > unrate_12):
+                    st.warning("🚨 [이번 달 시장 국면] 불황장 (안전자산 타이밍) ➔ **SHY 매수**")
+                    buy3_curr["SHY"] = "25.0%"
+                else:
+                    st.info("☀️ [이번 달 시장 국면] 평시/회복기 (공격자산 타이밍) ➔ **QQQ 매수**")
+                    buy3_curr["QQQ"] = "25.0%"
                 
                 with col5:
-                    if cond1 and cond2:
-                        st.warning("🚨 불황장 ➔ **SHY 매수**")
-                        buy3["SHY"] = "25.0%"
-                    else:
-                        st.info("☀️ 평시/회복기 ➔ **QQQ 매수**")
-                        buy3["QQQ"] = "25.0%"
+                    st.write(f"🔙 **지난달 투자 비중 ({month_data.index[-2].strftime('%m월')} 기준)**")
+                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy3_prev.items()]))
                 with col6:
-                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy3.items()]))
+                    st.write(f"🎯 **이번 달 목표 비중 ({month_data.index[-1].strftime('%m월')} 기준)**")
+                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy3_curr.items()]))
 
+                st.divider()
+                render_dashboard_rebalancer("3", buy3_curr)
+
+            # --- 탭 4. 한국형가속자산배분전략 ---
             with tab4:
-                col7, col8 = st.columns([1, 2])
-                buy4 = {}
-                aaa_scores = pd.Series({a: get_aaa_score(month_data[a]) for a in strat4_off})
-                max_sc = aaa_scores.max()
+                col7, col8 = st.columns([1, 1])
+                buy4_prev, buy4_curr = {}, {}
+                
+                # 전월 AAA 판단
+                max_sc_prev = pd.Series({a: get_aaa_score(month_data[a], -2) for a in strat4_off}).max()
+                if max_sc_prev > 0:
+                    buy4_prev[pd.Series({a: get_aaa_score(month_data[a], -2) for a in strat4_off}).nlargest(1).index[0]] = "100.0%"
+                else:
+                    buy4_prev[pd.Series({a: month_data[a].iloc[-2]/month_data[a].iloc[-3] for a in strat4_def}).nlargest(1).index[0]] = "100.0%"
+                    
+                # 당월 AAA 판단
+                aaa_scores_curr = pd.Series({a: get_aaa_score(month_data[a], -1) for a in strat4_off})
+                max_sc_curr = aaa_scores_curr.max()
+                if max_sc_curr > 0:
+                    st.success("📈 [이번 달 시장 국면] 공격형 자산 집중장")
+                    buy4_curr[aaa_scores_curr.nlargest(1).index[0]] = "100.0%"
+                else:
+                    st.warning("📉 [이번 달 시장 국면] 방어형 자산 대피장")
+                    buy4_curr[pd.Series({a: month_data[a].iloc[-1]/month_data[a].iloc[-2] for a in strat4_def}).nlargest(1).index[0]] = "100.0%"
                 
                 with col7:
-                    if max_sc > 0:
-                        st.success("📈 공격형 자산 집중")
-                        buy4[aaa_scores.nlargest(1).index[0]] = "100.0%"
-                    else:
-                        st.warning("📉 방어형 자산 대피")
-                        def_scores = pd.Series({a: month_data[a].iloc[-1]/month_data[a].iloc[-2] for a in strat4_def})
-                        buy4[def_scores.nlargest(1).index[0]] = "100.0%"
+                    st.write(f"🔙 **지난달 투자 비중 ({month_data.index[-2].strftime('%m월')} 기준)**")
+                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy4_prev.items()]))
                 with col8:
-                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy4.items()]))
+                    st.write(f"🎯 **이번 달 목표 비중 ({month_data.index[-1].strftime('%m월')} 기준)**")
+                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy4_curr.items()]))
+
+                st.divider()
+                render_dashboard_rebalancer("4", buy4_curr)
 
     except Exception as e:
         st.error(f"오류가 발생했습니다: {e}")
@@ -789,7 +915,7 @@ footer_html = """
 <div style='text-align: center; color: #8b90a8; font-size: 0.85em; padding: 20px 0; line-height: 1.6;'>
     <strong>⚖️ 법적 고지 및 면책사항 (Disclaimer)</strong><br>
     본 웹사이트(플랫폼)에서 제공하는 모든 정보, 데이터, 연산 결과는 투자 결정의 참고 용도로만 제공되며, 그 정확성이나 완전성을 보장하지 않습니다.<br>
-    야후 파이낸스(Yahoo Finance), FRED, Naver, CNN Fear & Greed 등 외부 통신망에서 제공되는 실시간 데이터는 시스템 환경에 따라 지연되거나 오류가 발생할 수 있습니다.<br>
+    야후 파이낸스(Yahoo Finance), FRED, Naver, DART, CNN Fear & Greed 등 외부 통신망에서 제공되는 실시간 데이터는 시스템 환경에 따라 지연되거나 오류가 발생할 수 있습니다.<br>
     본 플랫폼의 제작 및 제공자는 사용자의 투자 결과에 대해 어떠한 법적, 도의적 책임도 지지 않습니다.<br> 
     <strong>모든 최종 투자 판단과 그에 따른 책임은 투자자 본인에게 있습니다.</strong>
 </div>
