@@ -11,7 +11,7 @@ import FinanceDataReader as fdr
 st.set_page_config(page_title="프라이빗 통합 투자 플랫폼", layout="wide")
 
 # ==========================================
-# 🧭 금액 콤마 처리용 안전 변환 함수
+# 🧭 금액 콤마 처리용 안전 변환 함수 & 콜백
 # ==========================================
 def safe_int(val):
     """콤마가 포함된 문자열을 안전하게 정수로 변환"""
@@ -21,6 +21,22 @@ def safe_int(val):
         return int(float(val))
     except:
         return 0
+
+def format_number_str(key):
+    """텍스트 입력창에서 엔터를 치거나 포커스를 잃을 때 콤마를 찍어주는 콜백 함수"""
+    val = str(st.session_state[key]).replace(",", "").strip()
+    try:
+        if val == "": 
+            st.session_state[key] = "0"
+        else: 
+            st.session_state[key] = f"{int(float(val)):,}"
+    except ValueError:
+        st.session_state[key] = "0"
+
+# 세션 상태 초기화 (투자금액 입력칸 기본값 세팅)
+if "budget_stock" not in st.session_state: st.session_state.budget_stock = "15,000,000"
+if "budget_idx" not in st.session_state: st.session_state.budget_idx = "15,000,000"
+if "budget_asset" not in st.session_state: st.session_state.budget_asset = "100,000,000"
 
 # ==========================================
 # 🧭 공통 기능: CNN Fear & Greed & 전체 종목 리스트 가져오기
@@ -79,7 +95,7 @@ def get_stock_info(ticker):
         return 0.0, 0.0
 
 # ==========================================
-# 🎨 메인 타이틀 및 F&G 배너
+# 🎨 메인 타이틀 및 F&G 배너 
 # ==========================================
 st.markdown("<h1 style='text-align: center;'>📊 프라이빗 투자 계산기</h1>", unsafe_allow_html=True)
 st.markdown("<p style='text-align: center; color: #8b90a8; margin-top: -10px; margin-bottom: 30px;'>물타기 · 지수분할 · 기대수익률 · 자산배분 통합 계산</p>", unsafe_allow_html=True)
@@ -281,8 +297,9 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
         fetched_price, fetched_div = get_stock_info(stock_ticker) if stock_ticker else (0.0, 0.0)
         
         c1, c2, c3, c4 = st.columns(4)
-        # 콤마 입력을 위해 text_input 사용 후 파싱
-        budget_str = c1.text_input("총 투자 금액 (원)", value="15,000,000")
+        
+        # 콜백(on_change) 적용되어 엔터 입력 시 자동으로 콤마 포맷팅 됨
+        budget_str = c1.text_input("총 투자 금액 (원)", key="budget_stock", on_change=format_number_str, args=("budget_stock",))
         start_price_str = c2.text_input("1회차 매수 가격 (자동입력)", value=f"{int(fetched_price):,}" if fetched_price > 0 else "14,000")
         dividend_input_str = c3.text_input("예상 주당 배당금 (자동입력)", value=f"{int(fetched_div):,}")
         steps = c4.number_input("분할 횟수", min_value=2, max_value=20, value=5)
@@ -344,7 +361,9 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
         fetched_idx_price, _ = get_stock_info(idx_ticker) if idx_ticker else (0.0, 0.0)
 
         i1, i2, i3, i4 = st.columns(4)
-        idx_budget_str = i1.text_input("지수 총 투자 금액 (원)", value="15,000,000")
+        
+        # 콜백(on_change) 적용
+        idx_budget_str = i1.text_input("지수 총 투자 금액 (원)", key="budget_idx", on_change=format_number_str, args=("budget_idx",))
         idx_start_str = i2.text_input("첫 매수 지수/단가 (자동입력)", value=f"{int(fetched_idx_price):,}" if fetched_idx_price > 0 else "35,000")
         idx_drop = i3.number_input("구간별 하락률 (%)", value=5.0, step=0.5)
         idx_steps = i4.number_input("지수 분할 횟수", min_value=2, max_value=20, value=5)
@@ -374,8 +393,8 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
     with tab_asset:
         st.write("포트폴리오 비중 조절 (리밸런싱) 계산기")
         
-        # 콤마 입력을 위한 text_input 사용
-        total_asset_budget_str = st.text_input("총 투자 운용 금액 (원)", value="100,000,000")
+        # 콜백(on_change) 적용
+        total_asset_budget_str = st.text_input("총 투자 운용 금액 (원)", key="budget_asset", on_change=format_number_str, args=("budget_asset",))
         total_asset_budget = safe_int(total_asset_budget_str)
         
         if 'asset_df' not in st.session_state:
@@ -388,9 +407,9 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
             
         column_config = {
             "자산명 (선택)": st.column_config.SelectboxColumn("자산명 (클릭하여 전체 검색)", options=SEARCH_OPTIONS, width="large", required=True),
-            "현재가(원)": st.column_config.NumberColumn("현재가(원)"),
+            "현재가(원)": st.column_config.NumberColumn("현재가(원)", format="%d"),
             "목표비중(%)": st.column_config.NumberColumn("목표비중(%)", min_value=0.0, max_value=100.0),
-            "보유수량(주)": st.column_config.NumberColumn("보유수량(주)", min_value=0)
+            "보유수량(주)": st.column_config.NumberColumn("보유수량(주)", min_value=0, format="%d")
         }
 
         edited_df = st.data_editor(st.session_state.asset_df, num_rows="dynamic", column_config=column_config, use_container_width=True)
@@ -425,7 +444,6 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
             color = 'green' if val > 0 else 'red' if val < 0 else 'gray'
             return f'color: {color}; font-weight: bold;'
         
-        # applymap 오류 해결을 위해 판다스 버전에 맞춘 스타일 적용
         styled_df = result_df[["자산명 (선택)", "현재가(원)", "보유수량(주)", "목표수량(주)", "살 종목수(주)"]].style.format({
             "현재가(원)": "{:,.0f}원", 
             "보유수량(주)": "{:,.0f}주", 
@@ -433,6 +451,7 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
             "살 종목수(주)": "{:,.0f}주"
         })
         
+        # applymap 지원 종료(Pandas 최신 버전) 오류 방지용 로직
         if hasattr(styled_df, "map"):
             styled_df = styled_df.map(color_action, subset=["살 종목수(주)"])
         else:
