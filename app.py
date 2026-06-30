@@ -282,7 +282,11 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
     with tab_stock:
         st.write("개별종목 분할매수 스케줄 계산")
         
+        # 신규: 사용자 안내 문구 추가
+        st.info("💡 **안내:** 검색 후 종목의 현재가나 배당금이 외부 사정으로 인해 자동으로 나오지 않는다면, 해당 칸에 직접 **수동으로 입력해 주세요.**")
+        
         selected_stock = st.selectbox("🔍 종목 검색 (한국 코스피/코스닥 전체 및 미국 주요 종목 지원)", options=SEARCH_OPTIONS, index=1)
+        
         stock_ticker = ""
         if selected_stock == "직접 입력 (여기에 없는 종목)":
             stock_ticker = st.text_input("종목 코드 직접 입력 (예: 005930.KS, AAPL)")
@@ -293,8 +297,20 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
         
         c1, c2, c3, c4 = st.columns(4)
         budget_str = c1.text_input("총 투자 금액 (원)", key="budget_stock", on_change=format_number_str, args=("budget_stock",))
-        start_price_str = c2.text_input("1회차 매수 가격 (자동입력)", value=f"{int(fetched_price):,}" if fetched_price > 0 else "14,000")
-        dividend_input_str = c3.text_input("예상 주당 배당금 (자동입력)", value=f"{int(fetched_div):,}")
+        
+        # 신규: 선택된 종목의 Ticker를 key에 포함시켜, 종목이 바뀔 때마다 값을 강제로 새로고침 하도록 변경
+        start_price_str = c2.text_input(
+            "1회차 매수 가격 (자동입력)", 
+            value=f"{int(fetched_price):,}" if fetched_price > 0 else "", 
+            placeholder="안 나오면 수동 입력",
+            key=f"sp_{stock_ticker}"
+        )
+        dividend_input_str = c3.text_input(
+            "예상 주당 배당금 (자동입력)", 
+            value=f"{int(fetched_div):,}" if fetched_div > 0 else "0",
+            placeholder="안 나오면 수동 입력",
+            key=f"div_{stock_ticker}"
+        )
         steps = c4.number_input("분할 횟수", min_value=2, max_value=20, value=5)
         
         budget = safe_int(budget_str)
@@ -317,30 +333,35 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
                 drops.append(safe_int(val_str))
                 
         if st.button("개별종목 계산하기", type="primary"):
-            w_sum = (steps * (steps + 1)) / 2
-            res, t_spent, t_shares = [], 0, 0
-            curr_price = start_price
-            
-            for i in range(1, steps + 1):
-                target_amt = budget * (i / w_sum)
-                if i > 1: curr_price -= drops[i-2]
-                if curr_price <= 0: break
+            if start_price <= 0:
+                st.error("❗ 매수 가격이 0원이거나 입력되지 않았습니다. 현재가를 수동으로 입력해 주세요.")
+            else:
+                w_sum = (steps * (steps + 1)) / 2
+                res, t_spent, t_shares = [], 0, 0
+                curr_price = start_price
                 
-                shares = int(target_amt / curr_price)
-                actual = shares * curr_price
-                t_spent += actual
-                t_shares += shares
-                res.append({"회차": f"{i}차 ({i}배수)", "목표금액": int(target_amt), "매수가격": int(curr_price), "매수수량": shares, "체결금액": int(actual)})
-            
-            st.dataframe(pd.DataFrame(res).style.format({"목표금액": "{:,.0f}원", "매수가격": "{:,.0f}원", "체결금액": "{:,.0f}원", "매수수량": "{:,.0f}주"}), use_container_width=True)
-            
-            avg_price = int(t_spent/t_shares) if t_shares > 0 else 0
-            yield_rate = (dividend_input / avg_price) * 100 if avg_price > 0 and dividend_input > 0 else 0.0
-            st.success(f"**총 매수금액:** {t_spent:,.0f}원 | **평균단가:** {avg_price:,.0f}원 | **예상 배당률:** {yield_rate:.2f}% | **누적수량:** {t_shares:,.0f}주")
+                for i in range(1, steps + 1):
+                    target_amt = budget * (i / w_sum)
+                    if i > 1: curr_price -= drops[i-2]
+                    if curr_price <= 0: break
+                    
+                    shares = int(target_amt / curr_price)
+                    actual = shares * curr_price
+                    t_spent += actual
+                    t_shares += shares
+                    res.append({"회차": f"{i}차 ({i}배수)", "목표금액": int(target_amt), "매수가격": int(curr_price), "매수수량": shares, "체결금액": int(actual)})
+                
+                st.dataframe(pd.DataFrame(res).style.format({"목표금액": "{:,.0f}원", "매수가격": "{:,.0f}원", "체결금액": "{:,.0f}원", "매수수량": "{:,.0f}주"}), use_container_width=True)
+                
+                avg_price = int(t_spent/t_shares) if t_shares > 0 else 0
+                yield_rate = (dividend_input / avg_price) * 100 if avg_price > 0 and dividend_input > 0 else 0.0
+                st.success(f"**총 매수금액:** {t_spent:,.0f}원 | **평균단가:** {avg_price:,.0f}원 | **예상 배당률:** {yield_rate:.2f}% | **누적수량:** {t_shares:,.0f}주")
 
     # --- 2. 지수 물타기 ---
     with tab_idx:
         st.write("지수/ETF 분할매수 스케줄 계산")
+        
+        st.info("💡 **안내:** 검색 후 종목의 현재가가 외부 사정으로 인해 자동으로 나오지 않는다면, 직접 **수동으로 입력해 주세요.**")
         
         default_idx = next((i for i, x in enumerate(SEARCH_OPTIONS) if "069500" in x), 1)
         selected_idx = st.selectbox("🔍 지수/ETF 검색", options=SEARCH_OPTIONS, index=default_idx, key="idx_search") 
@@ -356,7 +377,14 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
         i1, i2, i3, i4 = st.columns(4)
         
         idx_budget_str = i1.text_input("지수 총 투자 금액 (원)", key="budget_idx", on_change=format_number_str, args=("budget_idx",))
-        idx_start_str = i2.text_input("첫 매수 지수/단가 (자동입력)", value=f"{int(fetched_idx_price):,}" if fetched_idx_price > 0 else "35,000")
+        
+        # 신규: 인덱스 티커 기반 동적 키 지정
+        idx_start_str = i2.text_input(
+            "첫 매수 지수/단가 (자동입력)", 
+            value=f"{int(fetched_idx_price):,}" if fetched_idx_price > 0 else "",
+            placeholder="안 나오면 수동 입력",
+            key=f"idx_p_{idx_ticker}"
+        )
         idx_drop = i3.number_input("구간별 하락률 (%)", value=5.0, step=0.5)
         idx_steps = i4.number_input("지수 분할 횟수", min_value=2, max_value=20, value=5)
         
@@ -364,22 +392,25 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
         idx_start = safe_int(idx_start_str)
         
         if st.button("지수 계산하기", type="primary"):
-            w_sum = (idx_steps * (idx_steps + 1)) / 2
-            res_idx, t_spent_idx, t_shares_idx = [], 0, 0
-            
-            for i in range(1, idx_steps + 1):
-                target_amt = idx_budget * (i / w_sum)
-                curr_idx = idx_start * (1 - (idx_drop / 100) * (i - 1))
-                if curr_idx <= 0: break
+            if idx_start <= 0:
+                st.error("❗ 첫 매수 지수/단가가 0원이거나 입력되지 않았습니다. 현재가를 수동으로 입력해 주세요.")
+            else:
+                w_sum = (idx_steps * (idx_steps + 1)) / 2
+                res_idx, t_spent_idx, t_shares_idx = [], 0, 0
                 
-                shares = int(target_amt / curr_idx)
-                actual = shares * curr_idx
-                t_spent_idx += actual
-                t_shares_idx += shares
-                res_idx.append({"회차": f"{i}차 (-{idx_drop*(i-1)}%)", "목표금액": int(target_amt), "매수지수(원)": int(curr_idx), "매수수량": shares, "체결금액": int(actual)})
-            
-            st.dataframe(pd.DataFrame(res_idx).style.format({"목표금액": "{:,.0f}원", "매수지수(원)": "{:,.0f}원", "체결금액": "{:,.0f}원", "매수수량": "{:,.0f}주"}), use_container_width=True)
-            st.success(f"**총 매수금액:** {t_spent_idx:,.0f}원 | **평균단가:** {int(t_spent_idx/t_shares_idx) if t_shares_idx > 0 else 0:,.0f}원 | **누적수량:** {t_shares_idx:,.0f}주")
+                for i in range(1, idx_steps + 1):
+                    target_amt = idx_budget * (i / w_sum)
+                    curr_idx = idx_start * (1 - (idx_drop / 100) * (i - 1))
+                    if curr_idx <= 0: break
+                    
+                    shares = int(target_amt / curr_idx)
+                    actual = shares * curr_idx
+                    t_spent_idx += actual
+                    t_shares_idx += shares
+                    res_idx.append({"회차": f"{i}차 (-{idx_drop*(i-1)}%)", "목표금액": int(target_amt), "매수지수(원)": int(curr_idx), "매수수량": shares, "체결금액": int(actual)})
+                
+                st.dataframe(pd.DataFrame(res_idx).style.format({"목표금액": "{:,.0f}원", "매수지수(원)": "{:,.0f}원", "체결금액": "{:,.0f}원", "매수수량": "{:,.0f}주"}), use_container_width=True)
+                st.success(f"**총 매수금액:** {t_spent_idx:,.0f}원 | **평균단가:** {int(t_spent_idx/t_shares_idx) if t_shares_idx > 0 else 0:,.0f}원 | **누적수량:** {t_shares_idx:,.0f}주")
 
     # --- 3. 자산배분 리밸런싱 ---
     with tab_asset:
@@ -388,7 +419,6 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
         total_asset_budget_str = st.text_input("총 투자 운용 금액 (원)", key="budget_asset", on_change=format_number_str, args=("budget_asset",))
         total_asset_budget = safe_int(total_asset_budget_str)
         
-        # 글자 날아감 방지: 입력 테이블의 기반이 되는 데이터프레임을 고정
         if 'asset_df_base' not in st.session_state:
             st.session_state.asset_df_base = pd.DataFrame([
                 {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "069500" in x), "직접 입력"), "현재가(원)": 35000, "목표비중(%)": 30.0, "보유수량(주)": 0},
@@ -458,7 +488,6 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
         bt_start = date_col1.date_input("백테스트 시작일", datetime.date.today() - datetime.timedelta(days=365*5))
         bt_end = date_col2.date_input("백테스트 종료일", datetime.date.today())
         
-        # 글자 날아감 방지: 입력 테이블의 기반이 되는 데이터프레임을 고정
         if 'bt_df_base' not in st.session_state:
             st.session_state.bt_df_base = pd.DataFrame([
                 {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "069500" in x), ""), "투입비중(%)": 60.0},
@@ -473,7 +502,6 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
         st.caption("💡 자산을 추가하려면 표의 빈 칸(아래쪽)을 클릭하고, 삭제하려면 맨 왼쪽 칸(인덱스)을 클릭 후 휴지통 아이콘(또는 Delete 키)을 누르세요.")
         edited_bt = st.data_editor(st.session_state.bt_df_base, num_rows="dynamic", column_config=bt_config, use_container_width=True, key="bt_editor")
         
-        # 실시간 합계 출력 및 검증
         total_bt_ratio = edited_bt["투입비중(%)"].fillna(0).sum()
         if total_bt_ratio == 100:
             st.success(f"✅ **투입 비중 합계: {total_bt_ratio:.1f}%** (백테스트 실행 가능)")
@@ -522,11 +550,8 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
                             days = len(rets)
                             if days < 2: return 0, 0, 0, 0
                             years = days / 252
-                            
-                            # 신규: 총 누적 수익률 계산
                             total_return = (cums.iloc[-1] / 100) - 1
                             cagr = (cums.iloc[-1] / 100) ** (1 / years) - 1
-                            
                             roll_max = cums.cummax()
                             drawdowns = cums / roll_max - 1
                             mdd = drawdowns.min()
@@ -539,7 +564,6 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
                         st.divider()
                         st.subheader("📊 백테스트 분석 결과")
                         
-                        # 크고 뚜렷하게 변경된 실제 연산 적용 기간
                         actual_start = port_cum.index[0].strftime('%Y년 %m월 %d일')
                         actual_end = port_cum.index[-1].strftime('%Y년 %m월 %d일')
                         st.markdown(f"""
@@ -549,7 +573,6 @@ elif app_mode == "🧮 프라이빗 투자 계산기":
                         </div>
                         """, unsafe_allow_html=True)
                         
-                        # 총 수익률을 포함하여 4개 컬럼으로 분할
                         m1, m2, m3, m4 = st.columns(4)
                         m1.metric("총 누적 수익률", f"{p_tot*100:.2f}%", f"SPY 벤치마크: {s_tot*100:.2f}%")
                         m2.metric("연평균 수익률 (CAGR)", f"{p_cagr*100:.2f}%", f"SPY 벤치마크: {s_cagr*100:.2f}%")
