@@ -7,6 +7,36 @@ import pandas_datareader.data as web
 import requests
 import FinanceDataReader as fdr
 
+# ==========================================
+# 🔐 비밀번호 인증 기능
+# ==========================================
+def check_password():
+    """비밀번호 인증을 위한 함수"""
+    def password_entered():
+        if st.session_state["password"] == "1234":  # 여기에 원하시는 비번을 입력하세요
+            st.session_state["password_correct"] = True
+            del st.session_state["password"]  # 비번 저장 안되게 삭제
+        else:
+            st.session_state["password_correct"] = False
+
+    if "password_correct" not in st.session_state:
+        # 첫 접속 시 입력창 표시
+        st.text_input("접속 비밀번호를 입력하세요", type="password", on_change=password_entered, key="password")
+        return False
+    elif not st.session_state["password_correct"]:
+        # 비번 틀렸을 때
+        st.text_input("접속 비밀번호를 입력하세요", type="password", on_change=password_entered, key="password")
+        st.error("비밀번호가 틀렸습니다.")
+        return False
+    else:
+        # 인증 성공
+        return True
+
+# 인증이 안 되었다면 여기서 멈춤
+if not check_password():
+    st.stop()
+
+
 # 페이지 기본 설정
 st.set_page_config(page_title="프라이빗 통합 투자 플랫폼", layout="wide")
 
