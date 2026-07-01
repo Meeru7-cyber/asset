@@ -266,13 +266,9 @@ def get_pbr_roe_price(ticker):
 
 @st.cache_data(ttl=14400)
 def load_financial_data(tickers):
-    """[버그 수정] 백테스트용 데이터는 무조건 'Adj Close(수정종가)'를 사용하여 배당수익을 포함하고 방어형 자산의 평탄화(Flat) 오류를 방지합니다."""
     start_date = "2010-01-01" 
     df = yf.download(tickers, start=start_date, threads=False, session=yf_session)
-    if 'Adj Close' in df.columns: 
-        df = df['Adj Close']
-    elif 'Close' in df.columns: 
-        df = df['Close']
+    if 'Close' in df.columns: df = df['Close']
     return df.ffill().dropna(how='all')
 
 @st.cache_data(ttl=14400)
@@ -362,6 +358,7 @@ def get_dashboard_backtest(strat_id, m_data, d_data, unrate_data):
         port_cum = (1 + pd.Series(port_rets, index=idx_dates)).cumprod() * 100
         spy_m = m_data['SPY'].dropna()
         
+        # QQQ가 데이터셋에 없으면 별도로 로드
         if 'QQQ' in m_data.columns: qqq_m = m_data['QQQ'].dropna()
         else: qqq_m = load_financial_data(['QQQ']).resample('ME').last()
         
@@ -390,6 +387,7 @@ def get_dashboard_backtest(strat_id, m_data, d_data, unrate_data):
         s_mdd = (spy_cum / spy_cum.cummax() - 1).min()
         q_mdd = (qqq_cum / qqq_cum.cummax() - 1).min()
         
+        # Sharpe
         p_series_ret = pd.Series(port_rets, index=idx_dates).loc[common_dates].dropna()
         s_series_ret = spy_m_c.pct_change().dropna()
         q_series_ret = qqq_m_c.pct_change().dropna()
@@ -425,6 +423,7 @@ def render_dashboard_backtest_ui(strat_id, m_data, d_data, unrate_data):
             end_dt = chart_df.index[-1].strftime('%Y-%m-%d')
             st.markdown(f"**🗓️ 데이터 반영 기간:** `{start_dt}` ~ `{end_dt}`")
             
+            # 고급 HTML 비교 테이블 렌더링
             html_table = f"""
             <div style="background-color: #1e2130; padding: 16px; border-radius: 12px; border: 1px solid #2e3147; margin-bottom: 20px;">
                 <table style="width:100%; text-align:right; font-size:1em; border-collapse: collapse;">
@@ -507,6 +506,10 @@ def render_dashboard_rebalancer(strat_id, buy_dict, data_df):
         else: styled_df = styled_df.applymap(color_action, subset=["살 종목수(주)"])
         st.dataframe(styled_df, use_container_width=True)
 
+def get_fmt(val, curr):
+    if val == 0: return ""
+    return f"{int(val):,}" if curr == "KRW" else f"{val:.2f}"
+
 # ==========================================
 # 🎨 메인 타이틀 및 F&G 배너
 # ==========================================
@@ -546,7 +549,6 @@ st.markdown(banner_html, unsafe_allow_html=True)
 st.sidebar.title("네비게이션")
 app_mode = st.sidebar.radio("원하시는 기능을 선택하세요:", ["🧮 프라이빗 투자 계산기", "📊 동적 자산배분 대시보드"])
 st.sidebar.caption("데이터 제공: Yahoo Finance, FRED, Naver, DART, CNN")
-
 
 # ==========================================
 # 1. 🧮 프라이빗 투자 계산기
@@ -751,7 +753,6 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                 continue
                 
             w = row["목표비중(%)"] / 100.0
-            
             if base_curr == "원화 (KRW)":
                 price_in_base = row["현재가"] if row["통화"] == "KRW" else row["현재가"] * EXCH_RATE
             else: 
@@ -821,7 +822,7 @@ if app_mode == "🧮 프라이빗 투자 계산기":
             if total_bt_ratio != 100:
                 st.error("투입비중의 합이 100%가 아닙니다. 표 아래의 합계를 확인해주세요.")
             else:
-                with st.spinner("과거 데이터를 불러오고 성과를 분석 중입니다... (최대 1분 소요)"):
+                with st.spinner("과거 데이터를 불러오고 성과를 분석 중입니다..."):
                     asset_weights = {}
                     for idx, row in edited_bt.iterrows():
                         asset_str = row["자산명 (선택)"]
@@ -834,10 +835,8 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                     tickers_to_fetch = list(set(list(asset_weights.keys()) + ["SPY", "QQQ"]))
                     
                     try:
-                        # Adj Close 적용된 함수 호출로 배당수익률 모두 포함
                         bt_data = yf.download(tickers_to_fetch, start=bt_start, end=bt_end, threads=False)
-                        if 'Adj Close' in bt_data.columns: bt_price = bt_data['Adj Close']
-                        elif 'Close' in bt_data.columns: bt_price = bt_data['Close']
+                        if 'Close' in bt_data.columns: bt_price = bt_data['Close']
                         else: bt_price = bt_data
                             
                         if isinstance(bt_price, pd.Series): bt_price = bt_price.to_frame(tickers_to_fetch[0])
@@ -883,54 +882,51 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                         </div>
                         """, unsafe_allow_html=True)
                         
-                        col_m, col_c = st.columns([1, 2])
-                        with col_m:
-                            html_table = f"""
-                            <div style="background-color: #1e2130; padding: 20px; border-radius: 12px; border: 1px solid #2e3147; margin-bottom: 20px;">
-                                <table style="width:100%; text-align:right; font-size:1em; border-collapse: collapse;">
-                                    <tr style="border-bottom: 2px solid #4f8ef7; color:#8b90a8;">
-                                        <th style="text-align:left; padding:10px;">성과 지표</th>
-                                        <th style="padding:10px; color:#4f8ef7;">전략 포트폴리오</th>
-                                        <th style="padding:10px;">SPY</th>
-                                        <th style="padding:10px;">QQQ</th>
-                                    </tr>
-                                    <tr style="border-bottom: 1px solid #2e3147;">
-                                        <td style="text-align:left; padding:12px; font-weight:bold; color:#e8eaf0;">총 누적 수익률</td>
-                                        <td style="padding:12px; color:#4f8ef7; font-weight:bold; font-size:1.1em;">{p_tot*100:,.2f}%</td>
-                                        <td style="padding:12px; color:#e8eaf0;">{s_tot*100:,.2f}%</td>
-                                        <td style="padding:12px; color:#e8eaf0;">{q_tot*100:,.2f}%</td>
-                                    </tr>
-                                    <tr style="border-bottom: 1px solid #2e3147;">
-                                        <td style="text-align:left; padding:12px; font-weight:bold; color:#e8eaf0;">연평균 수익률(CAGR)</td>
-                                        <td style="padding:12px; color:#4f8ef7; font-weight:bold; font-size:1.1em;">{p_cagr*100:,.2f}%</td>
-                                        <td style="padding:12px; color:#e8eaf0;">{s_cagr*100:,.2f}%</td>
-                                        <td style="padding:12px; color:#e8eaf0;">{q_cagr*100:,.2f}%</td>
-                                    </tr>
-                                    <tr style="border-bottom: 1px solid #2e3147;">
-                                        <td style="text-align:left; padding:12px; font-weight:bold; color:#e8eaf0;">최대 낙폭 (MDD)</td>
-                                        <td style="padding:12px; color:#e74c3c; font-weight:bold; font-size:1.1em;">{p_mdd*100:,.2f}%</td>
-                                        <td style="padding:12px; color:#8b90a8;">{s_mdd*100:,.2f}%</td>
-                                        <td style="padding:12px; color:#8b90a8;">{q_mdd*100:,.2f}%</td>
-                                    </tr>
-                                    <tr>
-                                        <td style="text-align:left; padding:12px; font-weight:bold; color:#e8eaf0;">Sharpe</td>
-                                        <td style="padding:12px; color:#4f8ef7; font-weight:bold; font-size:1.1em;">{p_sharpe:.2f}</td>
-                                        <td style="padding:12px; color:#8b90a8;">{s_sharpe:.2f}</td>
-                                        <td style="padding:12px; color:#8b90a8;">{q_sharpe:.2f}</td>
-                                    </tr>
-                                </table>
-                            </div>
-                            """
-                            st.markdown(html_table, unsafe_allow_html=True)
-                            
-                        with col_c:
-                            st.write("📈 **누적 자산 추이 비교 (초기 투자금 100 기준)**")
-                            chart_df = pd.DataFrame({
-                                "내 포트폴리오": port_cum,
-                                "SPY (S&P 500)": spy_cum,
-                                "QQQ (NASDAQ)": qqq_cum
-                            })
-                            st.line_chart(chart_df)
+                        html_table = f"""
+                        <div style="background-color: #1e2130; padding: 20px; border-radius: 12px; border: 1px solid #2e3147; margin-bottom: 20px;">
+                            <table style="width:100%; text-align:right; font-size:1em; border-collapse: collapse;">
+                                <tr style="border-bottom: 2px solid #4f8ef7; color:#8b90a8;">
+                                    <th style="text-align:left; padding:10px;">성과 지표</th>
+                                    <th style="padding:10px; color:#4f8ef7;">전략 포트폴리오</th>
+                                    <th style="padding:10px;">SPY (S&P 500)</th>
+                                    <th style="padding:10px;">QQQ (NASDAQ)</th>
+                                </tr>
+                                <tr style="border-bottom: 1px solid #2e3147;">
+                                    <td style="text-align:left; padding:12px; font-weight:bold; color:#e8eaf0;">총 누적 수익률</td>
+                                    <td style="padding:12px; color:#4f8ef7; font-weight:bold; font-size:1.1em;">{p_tot*100:,.2f}%</td>
+                                    <td style="padding:12px; color:#e8eaf0;">{s_tot*100:,.2f}%</td>
+                                    <td style="padding:12px; color:#e8eaf0;">{q_tot*100:,.2f}%</td>
+                                </tr>
+                                <tr style="border-bottom: 1px solid #2e3147;">
+                                    <td style="text-align:left; padding:12px; font-weight:bold; color:#e8eaf0;">연평균 수익률 (CAGR)</td>
+                                    <td style="padding:12px; color:#4f8ef7; font-weight:bold; font-size:1.1em;">{p_cagr*100:,.2f}%</td>
+                                    <td style="padding:12px; color:#e8eaf0;">{s_cagr*100:,.2f}%</td>
+                                    <td style="padding:12px; color:#e8eaf0;">{q_cagr*100:,.2f}%</td>
+                                </tr>
+                                <tr style="border-bottom: 1px solid #2e3147;">
+                                    <td style="text-align:left; padding:12px; font-weight:bold; color:#e8eaf0;">최대 낙폭 (MDD)</td>
+                                    <td style="padding:12px; color:#e74c3c; font-weight:bold; font-size:1.1em;">{p_mdd*100:,.2f}%</td>
+                                    <td style="padding:12px; color:#8b90a8;">{s_mdd*100:,.2f}%</td>
+                                    <td style="padding:12px; color:#8b90a8;">{q_mdd*100:,.2f}%</td>
+                                </tr>
+                                <tr>
+                                    <td style="text-align:left; padding:12px; font-weight:bold; color:#e8eaf0;">위험조정수익률 (Sharpe)</td>
+                                    <td style="padding:12px; color:#4f8ef7; font-weight:bold; font-size:1.1em;">{p_sharpe:.2f}</td>
+                                    <td style="padding:12px; color:#8b90a8;">{s_sharpe:.2f}</td>
+                                    <td style="padding:12px; color:#8b90a8;">{q_sharpe:.2f}</td>
+                                </tr>
+                            </table>
+                        </div>
+                        """
+                        st.markdown(html_table, unsafe_allow_html=True)
+                        
+                        st.write("📈 **누적 자산 추이 비교 (초기 투자금 100 기준)**")
+                        chart_df = pd.DataFrame({
+                            "전략 포트폴리오": port_cum,
+                            "SPY (미국 S&P 500)": spy_cum,
+                            "QQQ (미국 나스닥)": qqq_cum
+                        })
+                        st.line_chart(chart_df)
                         
                     except Exception as e:
                         st.error(f"백테스트 진행 중 오류가 발생했습니다. 종목 코드나 날짜 범위를 다시 확인해주세요. (사유: {e})")
