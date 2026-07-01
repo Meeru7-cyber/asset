@@ -264,7 +264,7 @@ def get_aaa_score(series, idx=-1):
 
 
 # ==========================================
-# 📊 대시보드 내부 백테스팅 엔진
+# 📊 대시보드 내부 백테스팅 엔진 (중복 제거 버그 패치)
 # ==========================================
 @st.cache_data(ttl=86400)
 def get_dashboard_backtest(strat_id, m_data, d_data, unrate_data):
@@ -280,7 +280,8 @@ def get_dashboard_backtest(strat_id, m_data, d_data, unrate_data):
         if strat_id == 1 or strat_id == 2:
             off_tkrs = strat1_off if strat_id == 1 else strat2_off
             def_tkrs = strat1_def if strat_id == 1 else strat2_def
-            tickers = ["TIP"] + off_tkrs + def_tkrs
+            # 오류 해결: list(set()) 으로 감싸서 중복된 'IEF' 티커를 제거해야 파이썬 연산 충돌 방지됨!
+            tickers = list(set(["TIP"] + off_tkrs + def_tkrs)) 
             df = m_data[tickers].dropna()
             if len(df) < 13: return None, None, None, None, None
             
@@ -298,7 +299,7 @@ def get_dashboard_backtest(strat_id, m_data, d_data, unrate_data):
                     top1 = baa_scores.loc[curr_date, def_tkrs].nlargest(1).index
                     weights = {t: 1.0 for t in top1}
                 ret = sum([weights[t] * (df.loc[next_date, t] / df.loc[curr_date, t] - 1) for t in weights])
-                port_rets.append(ret); idx_dates.append(next_date)
+                port_rets.append(float(ret)); idx_dates.append(next_date)
                 
         elif strat_id == 3:
             df = m_data[laa_assets].dropna()
@@ -322,10 +323,11 @@ def get_dashboard_backtest(strat_id, m_data, d_data, unrate_data):
                 else: weights["QQQ"] = 0.25
                 
                 ret = sum([weights[t] * (df.loc[next_date, t] / df.loc[curr_date, t] - 1) for t in weights])
-                port_rets.append(ret); idx_dates.append(next_date)
+                port_rets.append(float(ret)); idx_dates.append(next_date)
                 
         elif strat_id == 4:
-            tickers = strat4_off + strat4_def
+            # 오류 해결: list(set()) 적용
+            tickers = list(set(strat4_off + strat4_def))
             df = m_data[tickers].dropna()
             if len(df) < 7: return None, None, None, None, None
             
@@ -342,7 +344,7 @@ def get_dashboard_backtest(strat_id, m_data, d_data, unrate_data):
                     top1 = mom_1.loc[curr_date, strat4_def].nlargest(1).index
                     weights = {t: 1.0 for t in top1}
                 ret = sum([weights[t] * (df.loc[next_date, t] / df.loc[curr_date, t] - 1) for t in weights])
-                port_rets.append(ret); idx_dates.append(next_date)
+                port_rets.append(float(ret)); idx_dates.append(next_date)
                 
         if not port_rets: return None, None, None, None, None
         
@@ -487,14 +489,6 @@ strat2_def = ["IEF", "BIL"]
 laa_assets = ["IWD", "GLD", "IEF", "QQQ", "SHY", "SPY"]
 strat4_off = ["251350.KS", "133690.KS"]
 strat4_def = ["153130.KS", "130680.KS", "308620.KS", "132030.KS"]
-asset_names = {
-    "251350.KS": "KODEX 선진국MSCI World", "133690.KS": "TIGER 미국나스닥100",
-    "153130.KS": "KODEX 단기채권", "130680.KS": "TIGER 단기통안채",
-    "308620.KS": "KODEX 미국채10년선물", "132030.KS": "KODEX 단기채권PLUS",
-    "QQQ": "Invesco QQQ", "SPY": "SPDR S&P 500", "IEF": "iShares 7-10Y Treasury",
-    "BIL": "SPDR 1-3M T-Bill", "SHY": "iShares 1-3Y Treasury", "GLD": "SPDR Gold",
-    "IWD": "iShares Russell 1000 Value"
-}
 all_tickers = list(set(strat1_off + strat1_def + strat2_off + strat2_def + laa_assets + strat4_off + strat4_def + ["TIP"]))
 
 def get_fmt(val, curr):
@@ -786,6 +780,7 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                     tickers_to_fetch = list(set(list(asset_weights.keys()) + ["SPY"]))
                     
                     try:
+                        # 백테스트용 순정 세션 적용
                         bt_data = yf.download(tickers_to_fetch, start=bt_start, end=bt_end, threads=False)
                         if 'Close' in bt_data.columns:
                             bt_price = bt_data['Close']
