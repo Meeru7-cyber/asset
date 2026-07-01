@@ -15,7 +15,7 @@ st.set_page_config(page_title="프라이빗 통합 투자 플랫폼", layout="wi
 # ==========================================
 def check_password():
     def password_entered():
-        if st.session_state["password"] == "1234":  # 여기에 원하시는 비밀번호를 입력하세요
+        if st.session_state["password"] == "7777":  # 여기에 원하시는 비밀번호를 입력하세요
             st.session_state["password_correct"] = True
             del st.session_state["password"]
         else:
