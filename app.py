@@ -15,7 +15,7 @@ st.set_page_config(page_title="프라이빗 통합 투자 플랫폼", layout="wi
 # ==========================================
 def check_password():
     def password_entered():
-        if st.session_state["password"] == "7777":  # 여기에 원하시는 비밀번호를 입력하세요
+        if st.session_state["password"] == "1234":  # 여기에 원하시는 비밀번호를 입력하세요
             st.session_state["password_correct"] = True
             del st.session_state["password"]
         else:
@@ -35,7 +35,7 @@ if not check_password():
     st.stop()
 
 # ==========================================
-# 🌟 [오류 해결] 공통 글로벌 변수 최상단 배치
+# 🌟 공통 글로벌 변수 최상단 배치
 # ==========================================
 strat1_off = ["QQQ", "VEU", "VWO", "TLT", "IEF", "DBC", "VNQ"]
 strat1_def = ["IEF", "BIL"]
@@ -54,7 +54,6 @@ asset_names = {
     "IWD": "iShares Russell 1000 Value"
 }
 
-# 중복 제거된 전체 티커 리스트
 all_tickers = list(set(["TIP"] + strat1_off + strat1_def + strat2_off + strat2_def + laa_assets + strat4_off + strat4_def))
 
 # ==========================================
@@ -284,7 +283,7 @@ def get_aaa_score(series, idx=-1):
     return sum([(series.iloc[idx] - series.iloc[idx-m]) / series.iloc[idx-m] for m in [1, 3, 6]])
 
 # ==========================================
-# 📊 대시보드 내부 백테스팅 & 리밸런서 엔진
+# 📊 대시보드 내부 백테스팅 엔진 (SPY & QQQ 비교 추가)
 # ==========================================
 @st.cache_data(ttl=86400)
 def get_dashboard_backtest(strat_id, m_data, d_data, unrate_data):
@@ -295,7 +294,7 @@ def get_dashboard_backtest(strat_id, m_data, d_data, unrate_data):
             def_tkrs = strat1_def if strat_id == 1 else strat2_def
             tickers = list(set(["TIP"] + off_tkrs + def_tkrs)) 
             df = m_data[tickers].dropna()
-            if len(df) < 13: return None, None, None, None, None
+            if len(df) < 13: return None, None
             
             mom_1 = df / df.shift(1) - 1; mom_3 = df / df.shift(3) - 1
             mom_6 = df / df.shift(6) - 1; mom_9 = df / df.shift(9) - 1; mom_12 = df / df.shift(12) - 1
@@ -315,7 +314,7 @@ def get_dashboard_backtest(strat_id, m_data, d_data, unrate_data):
                 
         elif strat_id == 3:
             df = m_data[laa_assets].dropna()
-            if len(df) < 13: return None, None, None, None, None
+            if len(df) < 13: return None, None
             d_spy = d_data['SPY'].dropna(); d_spy_200 = d_spy.rolling(200).mean()
             u_df = unrate_data['UNRATE'].dropna(); u_12 = u_df.rolling(12).mean()
             
@@ -337,7 +336,7 @@ def get_dashboard_backtest(strat_id, m_data, d_data, unrate_data):
         elif strat_id == 4:
             tickers = list(set(strat4_off + strat4_def))
             df = m_data[tickers].dropna()
-            if len(df) < 7: return None, None, None, None, None
+            if len(df) < 7: return None, None
             
             mom_1 = df / df.shift(1) - 1; mom_3 = df / df.shift(3) - 1; mom_6 = df / df.shift(6) - 1
             aaa_scores = mom_1 + mom_3 + mom_6
@@ -354,45 +353,115 @@ def get_dashboard_backtest(strat_id, m_data, d_data, unrate_data):
                 ret = sum([weights[t] * (df.loc[next_date, t] / df.loc[curr_date, t] - 1) for t in weights])
                 port_rets.append(float(ret)); idx_dates.append(next_date)
                 
-        if not port_rets: return None, None, None, None, None
+        if not port_rets: return None, None
         
         port_cum = (1 + pd.Series(port_rets, index=idx_dates)).cumprod() * 100
         spy_m = m_data['SPY'].dropna()
-        common_dates = port_cum.index.intersection(spy_m.index)
-        if len(common_dates) < 2: return None, None, None, None, None
+        
+        # QQQ가 데이터셋에 없으면 별도로 로드
+        if 'QQQ' in m_data.columns: qqq_m = m_data['QQQ'].dropna()
+        else: qqq_m = load_financial_data(['QQQ']).resample('ME').last()
+        
+        common_dates = port_cum.index.intersection(spy_m.index).intersection(qqq_m.index)
+        if len(common_dates) < 2: return None, None
         
         port_cum = port_cum.loc[common_dates]
         port_cum = port_cum / port_cum.iloc[0] * 100
-        spy_start_price = spy_m.loc[common_dates[0]]
-        spy_cum = (spy_m.loc[common_dates] / spy_start_price) * 100
+        
+        spy_m_c = spy_m.loc[common_dates]
+        spy_cum = (spy_m_c / spy_m_c.iloc[0]) * 100
+        
+        qqq_m_c = qqq_m.loc[common_dates]
+        qqq_cum = (qqq_m_c / qqq_m_c.iloc[0]) * 100
         
         years = len(port_cum) / 12
+        p_tot = (port_cum.iloc[-1] / 100) - 1
+        s_tot = (spy_cum.iloc[-1] / 100) - 1
+        q_tot = (qqq_cum.iloc[-1] / 100) - 1
+        
         p_cagr = (port_cum.iloc[-1] / 100) ** (1 / years) - 1
         s_cagr = (spy_cum.iloc[-1] / 100) ** (1 / years) - 1
+        q_cagr = (qqq_cum.iloc[-1] / 100) ** (1 / years) - 1
+        
         p_mdd = (port_cum / port_cum.cummax() - 1).min()
         s_mdd = (spy_cum / spy_cum.cummax() - 1).min()
+        q_mdd = (qqq_cum / qqq_cum.cummax() - 1).min()
         
-        chart_df = pd.DataFrame({"전략 포트폴리오": port_cum, "SPY (벤치마크)": spy_cum})
-        return p_cagr, p_mdd, s_cagr, s_mdd, chart_df
+        # Sharpe
+        p_series_ret = pd.Series(port_rets, index=idx_dates).loc[common_dates].dropna()
+        s_series_ret = spy_m_c.pct_change().dropna()
+        q_series_ret = qqq_m_c.pct_change().dropna()
+        
+        p_sharpe = (p_series_ret.mean() / p_series_ret.std() * np.sqrt(12)) if p_series_ret.std() != 0 else 0
+        s_sharpe = (s_series_ret.mean() / s_series_ret.std() * np.sqrt(12)) if s_series_ret.std() != 0 else 0
+        q_sharpe = (q_series_ret.mean() / q_series_ret.std() * np.sqrt(12)) if q_series_ret.std() != 0 else 0
+        
+        chart_df = pd.DataFrame({
+            "전략 포트폴리오": port_cum, 
+            "SPY (S&P 500)": spy_cum,
+            "QQQ (NASDAQ)": qqq_cum
+        })
+        
+        metrics = {
+            "p_tot": p_tot, "s_tot": s_tot, "q_tot": q_tot,
+            "p_cagr": p_cagr, "s_cagr": s_cagr, "q_cagr": q_cagr,
+            "p_mdd": p_mdd, "s_mdd": s_mdd, "q_mdd": q_mdd,
+            "p_sharpe": p_sharpe, "s_sharpe": s_sharpe, "q_sharpe": q_sharpe
+        }
+        return metrics, chart_df
     except Exception as e:
-        return None, None, None, None, None
+        return None, None
 
 def render_dashboard_backtest_ui(strat_id, m_data, d_data, unrate_data):
     st.write("#### 📊 전략 누적 성과 백테스트 (최대 가용 기간)")
-    p_cagr, p_mdd, s_cagr, s_mdd, chart_df = get_dashboard_backtest(strat_id, m_data, d_data, unrate_data)
+    metrics, chart_df = get_dashboard_backtest(strat_id, m_data, d_data, unrate_data)
     
     if chart_df is not None:
         col_m, col_c = st.columns([1, 2])
         with col_m:
-            p_tot = (chart_df["전략 포트폴리오"].iloc[-1] / 100) - 1
-            s_tot = (chart_df["SPY (벤치마크)"].iloc[-1] / 100) - 1
-            st.metric("총 누적 수익률", f"{p_tot*100:.2f}%", f"SPY: {s_tot*100:.2f}%")
-            st.metric("연평균 수익률 (CAGR)", f"{p_cagr*100:.2f}%", f"SPY: {s_cagr*100:.2f}%")
-            st.metric("최대 낙폭 (MDD)", f"{p_mdd*100:.2f}%", f"SPY: {s_mdd*100:.2f}%", delta_color="inverse")
-            
             start_dt = chart_df.index[0].strftime('%Y-%m-%d')
             end_dt = chart_df.index[-1].strftime('%Y-%m-%d')
-            st.caption(f"🗓️ 백테스트 기간:<br>{start_dt} ~ {end_dt}", unsafe_allow_html=True)
+            st.markdown(f"**🗓️ 데이터 반영 기간:** `{start_dt}` ~ `{end_dt}`")
+            
+            # 고급 HTML 비교 테이블 렌더링
+            html_table = f"""
+            <div style="background-color: #1e2130; padding: 16px; border-radius: 12px; border: 1px solid #2e3147; margin-bottom: 20px;">
+                <table style="width:100%; text-align:right; font-size:1em; border-collapse: collapse;">
+                    <tr style="border-bottom: 2px solid #4f8ef7; color:#8b90a8;">
+                        <th style="text-align:left; padding:8px;">성과 지표</th>
+                        <th style="padding:8px; color:#4f8ef7;">전략 포트폴리오</th>
+                        <th style="padding:8px;">SPY</th>
+                        <th style="padding:8px;">QQQ</th>
+                    </tr>
+                    <tr style="border-bottom: 1px solid #2e3147;">
+                        <td style="text-align:left; padding:10px; font-weight:bold; color:#e8eaf0;">총 수익률</td>
+                        <td style="padding:10px; color:#4f8ef7; font-weight:bold; font-size:1.1em;">{metrics['p_tot']*100:,.2f}%</td>
+                        <td style="padding:10px; color:#e8eaf0;">{metrics['s_tot']*100:,.2f}%</td>
+                        <td style="padding:10px; color:#e8eaf0;">{metrics['q_tot']*100:,.2f}%</td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid #2e3147;">
+                        <td style="text-align:left; padding:10px; font-weight:bold; color:#e8eaf0;">CAGR</td>
+                        <td style="padding:10px; color:#4f8ef7; font-weight:bold; font-size:1.1em;">{metrics['p_cagr']*100:,.2f}%</td>
+                        <td style="padding:10px; color:#e8eaf0;">{metrics['s_cagr']*100:,.2f}%</td>
+                        <td style="padding:10px; color:#e8eaf0;">{metrics['q_cagr']*100:,.2f}%</td>
+                    </tr>
+                    <tr style="border-bottom: 1px solid #2e3147;">
+                        <td style="text-align:left; padding:10px; font-weight:bold; color:#e8eaf0;">MDD</td>
+                        <td style="padding:10px; color:#e74c3c; font-weight:bold; font-size:1.1em;">{metrics['p_mdd']*100:,.2f}%</td>
+                        <td style="padding:10px; color:#8b90a8;">{metrics['s_mdd']*100:,.2f}%</td>
+                        <td style="padding:10px; color:#8b90a8;">{metrics['q_mdd']*100:,.2f}%</td>
+                    </tr>
+                    <tr>
+                        <td style="text-align:left; padding:10px; font-weight:bold; color:#e8eaf0;">Sharpe</td>
+                        <td style="padding:10px; color:#4f8ef7; font-weight:bold; font-size:1.1em;">{metrics['p_sharpe']:.2f}</td>
+                        <td style="padding:10px; color:#8b90a8;">{metrics['s_sharpe']:.2f}</td>
+                        <td style="padding:10px; color:#8b90a8;">{metrics['q_sharpe']:.2f}</td>
+                    </tr>
+                </table>
+            </div>
+            """
+            st.markdown(html_table, unsafe_allow_html=True)
+            
         with col_c:
             st.line_chart(chart_df)
     else:
@@ -480,7 +549,6 @@ st.markdown(banner_html, unsafe_allow_html=True)
 st.sidebar.title("네비게이션")
 app_mode = st.sidebar.radio("원하시는 기능을 선택하세요:", ["🧮 프라이빗 투자 계산기", "📊 동적 자산배분 대시보드"])
 st.sidebar.caption("데이터 제공: Yahoo Finance, FRED, Naver, DART, CNN")
-
 
 # ==========================================
 # 1. 🧮 프라이빗 투자 계산기
@@ -685,7 +753,6 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                 continue
                 
             w = row["목표비중(%)"] / 100.0
-            
             if base_curr == "원화 (KRW)":
                 price_in_base = row["현재가"] if row["통화"] == "KRW" else row["현재가"] * EXCH_RATE
             else: 
@@ -723,9 +790,9 @@ if app_mode == "🧮 프라이빗 투자 계산기":
             
         st.dataframe(styled_df, use_container_width=True)
 
-    # --- 4. 자산배분 백테스트 ---
+    # --- 4. 자산배분 백테스트 (SPY, QQQ 동시 비교) ---
     with tab_backtest:
-        st.write("과거 데이터를 기반으로 포트폴리오의 성과(총 수익률, CAGR, MDD, Sharpe)를 S&P500(SPY)과 비교 검증합니다.")
+        st.write("과거 데이터를 기반으로 포트폴리오의 성과(총 수익률, CAGR, MDD, Sharpe)를 **SPY(S&P500), QQQ(나스닥 100)** 벤치마크와 비교 검증합니다.")
         
         date_col1, date_col2 = st.columns(2)
         bt_start = date_col1.date_input("백테스트 시작일", datetime.date.today() - datetime.timedelta(days=365*5))
@@ -764,31 +831,28 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                             tkr = asset_str.split("(")[-1].replace(")", "").strip()
                             asset_weights[tkr] = asset_weights.get(tkr, 0) + w
                             
-                    tickers_to_fetch = list(set(list(asset_weights.keys()) + ["SPY"]))
+                    # 비교를 위해 SPY, QQQ 기본 추가
+                    tickers_to_fetch = list(set(list(asset_weights.keys()) + ["SPY", "QQQ"]))
                     
                     try:
-                        # 백테스트를 위해 로컬에서 15년치 다운로드
                         bt_data = yf.download(tickers_to_fetch, start=bt_start, end=bt_end, threads=False)
-                        if 'Close' in bt_data.columns:
-                            bt_price = bt_data['Close']
-                        else:
-                            bt_price = bt_data
+                        if 'Close' in bt_data.columns: bt_price = bt_data['Close']
+                        else: bt_price = bt_data
                             
-                        if isinstance(bt_price, pd.Series):
-                            bt_price = bt_price.to_frame(tickers_to_fetch[0])
-                            
+                        if isinstance(bt_price, pd.Series): bt_price = bt_price.to_frame(tickers_to_fetch[0])
                         bt_price = bt_price.ffill().dropna()
                         daily_ret = bt_price.pct_change().dropna()
                         
                         port_ret = pd.Series(0.0, index=daily_ret.index)
                         for tkr, weight in asset_weights.items():
-                            if tkr in daily_ret.columns:
-                                port_ret += daily_ret[tkr] * weight
+                            if tkr in daily_ret.columns: port_ret += daily_ret[tkr] * weight
                                 
                         spy_ret = daily_ret["SPY"] if "SPY" in daily_ret.columns else pd.Series(0.0, index=daily_ret.index)
+                        qqq_ret = daily_ret["QQQ"] if "QQQ" in daily_ret.columns else pd.Series(0.0, index=daily_ret.index)
                         
                         port_cum = (1 + port_ret).cumprod() * 100
                         spy_cum = (1 + spy_ret).cumprod() * 100
+                        qqq_cum = (1 + qqq_ret).cumprod() * 100
                         
                         def get_metrics(rets, cums):
                             days = len(rets)
@@ -804,6 +868,7 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                             
                         p_tot, p_cagr, p_mdd, p_sharpe = get_metrics(port_ret, port_cum)
                         s_tot, s_cagr, s_mdd, s_sharpe = get_metrics(spy_ret, spy_cum)
+                        q_tot, q_cagr, q_mdd, q_sharpe = get_metrics(qqq_ret, qqq_cum)
                         
                         st.divider()
                         st.subheader("📊 백테스트 분석 결과")
@@ -817,16 +882,49 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                         </div>
                         """, unsafe_allow_html=True)
                         
-                        m1, m2, m3, m4 = st.columns(4)
-                        m1.metric("총 누적 수익률", f"{p_tot*100:.2f}%", f"SPY 벤치마크: {s_tot*100:.2f}%")
-                        m2.metric("연평균 수익률 (CAGR)", f"{p_cagr*100:.2f}%", f"SPY 벤치마크: {s_cagr*100:.2f}%")
-                        m3.metric("최대 낙폭 (MDD)", f"{p_mdd*100:.2f}%", f"SPY 벤치마크: {s_mdd*100:.2f}%", delta_color="inverse")
-                        m4.metric("위험조정수익률 (Sharpe)", f"{p_sharpe:.2f}", f"SPY 벤치마크: {s_sharpe:.2f}")
+                        html_table = f"""
+                        <div style="background-color: #1e2130; padding: 20px; border-radius: 12px; border: 1px solid #2e3147; margin-bottom: 20px;">
+                            <table style="width:100%; text-align:right; font-size:1em; border-collapse: collapse;">
+                                <tr style="border-bottom: 2px solid #4f8ef7; color:#8b90a8;">
+                                    <th style="text-align:left; padding:10px;">성과 지표</th>
+                                    <th style="padding:10px; color:#4f8ef7;">전략 포트폴리오</th>
+                                    <th style="padding:10px;">SPY (S&P 500)</th>
+                                    <th style="padding:10px;">QQQ (NASDAQ)</th>
+                                </tr>
+                                <tr style="border-bottom: 1px solid #2e3147;">
+                                    <td style="text-align:left; padding:12px; font-weight:bold; color:#e8eaf0;">총 누적 수익률</td>
+                                    <td style="padding:12px; color:#4f8ef7; font-weight:bold; font-size:1.1em;">{p_tot*100:,.2f}%</td>
+                                    <td style="padding:12px; color:#e8eaf0;">{s_tot*100:,.2f}%</td>
+                                    <td style="padding:12px; color:#e8eaf0;">{q_tot*100:,.2f}%</td>
+                                </tr>
+                                <tr style="border-bottom: 1px solid #2e3147;">
+                                    <td style="text-align:left; padding:12px; font-weight:bold; color:#e8eaf0;">연평균 수익률 (CAGR)</td>
+                                    <td style="padding:12px; color:#4f8ef7; font-weight:bold; font-size:1.1em;">{p_cagr*100:,.2f}%</td>
+                                    <td style="padding:12px; color:#e8eaf0;">{s_cagr*100:,.2f}%</td>
+                                    <td style="padding:12px; color:#e8eaf0;">{q_cagr*100:,.2f}%</td>
+                                </tr>
+                                <tr style="border-bottom: 1px solid #2e3147;">
+                                    <td style="text-align:left; padding:12px; font-weight:bold; color:#e8eaf0;">최대 낙폭 (MDD)</td>
+                                    <td style="padding:12px; color:#e74c3c; font-weight:bold; font-size:1.1em;">{p_mdd*100:,.2f}%</td>
+                                    <td style="padding:12px; color:#8b90a8;">{s_mdd*100:,.2f}%</td>
+                                    <td style="padding:12px; color:#8b90a8;">{q_mdd*100:,.2f}%</td>
+                                </tr>
+                                <tr>
+                                    <td style="text-align:left; padding:12px; font-weight:bold; color:#e8eaf0;">위험조정수익률 (Sharpe)</td>
+                                    <td style="padding:12px; color:#4f8ef7; font-weight:bold; font-size:1.1em;">{p_sharpe:.2f}</td>
+                                    <td style="padding:12px; color:#8b90a8;">{s_sharpe:.2f}</td>
+                                    <td style="padding:12px; color:#8b90a8;">{q_sharpe:.2f}</td>
+                                </tr>
+                            </table>
+                        </div>
+                        """
+                        st.markdown(html_table, unsafe_allow_html=True)
                         
                         st.write("📈 **누적 자산 추이 비교 (초기 투자금 100 기준)**")
                         chart_df = pd.DataFrame({
-                            "내 포트폴리오": port_cum,
-                            "SPY (미국 S&P 500)": spy_cum
+                            "전략 포트폴리오": port_cum,
+                            "SPY (미국 S&P 500)": spy_cum,
+                            "QQQ (미국 나스닥)": qqq_cum
                         })
                         st.line_chart(chart_df)
                         
@@ -970,7 +1068,6 @@ elif app_mode == "📊 동적 자산배분 대시보드":
             ])
             tip_score = get_baa_score(month_data["TIP"])
             
-            # --- 탭 1. 밸런스 전략 ---
             with tab1:
                 col1, col2 = st.columns([1, 1])
                 buy1_prev, buy1_curr = {}, {}
@@ -1001,7 +1098,6 @@ elif app_mode == "📊 동적 자산배분 대시보드":
                 st.divider()
                 render_dashboard_rebalancer("1", buy1_curr, data)
 
-            # --- 탭 2. 미국밸런스 섹터 전략 ---
             with tab2:
                 col3, col4 = st.columns([1, 1])
                 buy2_prev, buy2_curr = {}, {}
@@ -1030,7 +1126,6 @@ elif app_mode == "📊 동적 자산배분 대시보드":
                 st.divider()
                 render_dashboard_rebalancer("2", buy2_curr, data)
 
-            # --- 탭 3. LAA 전략 ---
             with tab3:
                 col5, col6 = st.columns([1, 1])
                 buy3_prev = {"IWD": "25.0%", "GLD": "25.0%", "IEF": "25.0%"}
@@ -1070,7 +1165,6 @@ elif app_mode == "📊 동적 자산배분 대시보드":
                 st.divider()
                 render_dashboard_rebalancer("3", buy3_curr, data)
 
-            # --- 탭 4. 한국형가속자산배분전략 ---
             with tab4:
                 col7, col8 = st.columns([1, 1])
                 buy4_prev, buy4_curr = {} , {}
