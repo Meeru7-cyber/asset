@@ -15,7 +15,7 @@ st.set_page_config(page_title="프라이빗 통합 투자 플랫폼", layout="wi
 # ==========================================
 def check_password():
     def password_entered():
-        if st.session_state["password"] == "1234":  # 여기에 원하시는 비밀번호를 입력하세요
+        if st.session_state["password"] == "7777":  # 여기에 원하시는 비밀번호를 입력하세요
             st.session_state["password_correct"] = True
             del st.session_state["password"]
         else:
@@ -34,6 +34,28 @@ def check_password():
 if not check_password():
     st.stop()
 
+# ==========================================
+# 🌟 [오류 해결] 공통 글로벌 변수 최상단 배치
+# ==========================================
+strat1_off = ["QQQ", "VEU", "VWO", "TLT", "IEF", "DBC", "VNQ"]
+strat1_def = ["IEF", "BIL"]
+strat2_off = ["IBB", "IGV", "SKYY", "SOXX", "XLE", "XRT", "IEF", "DBC"]
+strat2_def = ["IEF", "BIL"]
+laa_assets = ["IWD", "GLD", "IEF", "QQQ", "SHY", "SPY"]
+strat4_off = ["251350.KS", "133690.KS"]
+strat4_def = ["153130.KS", "130680.KS", "308620.KS", "132030.KS"]
+
+asset_names = {
+    "251350.KS": "KODEX 선진국MSCI World", "133690.KS": "TIGER 미국나스닥100",
+    "153130.KS": "KODEX 단기채권", "130680.KS": "TIGER 단기통안채",
+    "308620.KS": "KODEX 미국채10년선물", "132030.KS": "KODEX 단기채권PLUS",
+    "QQQ": "Invesco QQQ", "SPY": "SPDR S&P 500", "IEF": "iShares 7-10Y Treasury",
+    "BIL": "SPDR 1-3M T-Bill", "SHY": "iShares 1-3Y Treasury", "GLD": "SPDR Gold",
+    "IWD": "iShares Russell 1000 Value"
+}
+
+# 중복 제거된 전체 티커 리스트
+all_tickers = list(set(["TIP"] + strat1_off + strat1_def + strat2_off + strat2_def + laa_assets + strat4_off + strat4_def))
 
 # ==========================================
 # 🛡️ 야후 파이낸스 Rate Limit 차단 방지용 세션 위장
@@ -245,7 +267,6 @@ def get_pbr_roe_price(ticker):
 
 @st.cache_data(ttl=14400)
 def load_financial_data(tickers):
-    """대시보드 및 롱텀 백테스트용 데이터 (15년치)"""
     start_date = "2010-01-01" 
     df = yf.download(tickers, start=start_date, threads=False, session=yf_session)
     if 'Close' in df.columns: df = df['Close']
@@ -262,25 +283,16 @@ def get_baa_score(series, idx=-1):
 def get_aaa_score(series, idx=-1):
     return sum([(series.iloc[idx] - series.iloc[idx-m]) / series.iloc[idx-m] for m in [1, 3, 6]])
 
-
 # ==========================================
-# 📊 대시보드 내부 백테스팅 엔진 (중복 제거 버그 패치)
+# 📊 대시보드 내부 백테스팅 & 리밸런서 엔진
 # ==========================================
 @st.cache_data(ttl=86400)
 def get_dashboard_backtest(strat_id, m_data, d_data, unrate_data):
-    """각 전략의 과거 수익률을 시뮬레이션하여 CAGR, MDD, 차트 도출"""
     try:
-        strat1_off = ["QQQ", "VEU", "VWO", "TLT", "IEF", "DBC", "VNQ"]; strat1_def = ["IEF", "BIL"]
-        strat2_off = ["IBB", "IGV", "SKYY", "SOXX", "XLE", "XRT", "IEF", "DBC"]; strat2_def = ["IEF", "BIL"]
-        laa_assets = ["IWD", "GLD", "IEF", "QQQ", "SHY", "SPY"]
-        strat4_off = ["251350.KS", "133690.KS"]; strat4_def = ["153130.KS", "130680.KS", "308620.KS", "132030.KS"]
-        
         port_rets, idx_dates = [], []
-        
         if strat_id == 1 or strat_id == 2:
             off_tkrs = strat1_off if strat_id == 1 else strat2_off
             def_tkrs = strat1_def if strat_id == 1 else strat2_def
-            # 오류 해결: list(set()) 으로 감싸서 중복된 'IEF' 티커를 제거해야 파이썬 연산 충돌 방지됨!
             tickers = list(set(["TIP"] + off_tkrs + def_tkrs)) 
             df = m_data[tickers].dropna()
             if len(df) < 13: return None, None, None, None, None
@@ -304,7 +316,6 @@ def get_dashboard_backtest(strat_id, m_data, d_data, unrate_data):
         elif strat_id == 3:
             df = m_data[laa_assets].dropna()
             if len(df) < 13: return None, None, None, None, None
-            
             d_spy = d_data['SPY'].dropna(); d_spy_200 = d_spy.rolling(200).mean()
             u_df = unrate_data['UNRATE'].dropna(); u_12 = u_df.rolling(12).mean()
             
@@ -313,7 +324,6 @@ def get_dashboard_backtest(strat_id, m_data, d_data, unrate_data):
                 spy_mask = d_spy.index <= curr_date
                 if not spy_mask.any(): continue
                 spy_prev, spy_200_prev = d_spy[spy_mask].iloc[-1], d_spy_200[spy_mask].iloc[-1]
-                
                 ur_mask = u_df.index <= curr_date
                 if not ur_mask.any(): continue
                 ur_prev, ur_12_prev = u_df[ur_mask].iloc[-1], u_12[ur_mask].iloc[-1]
@@ -321,12 +331,10 @@ def get_dashboard_backtest(strat_id, m_data, d_data, unrate_data):
                 weights = {"IWD": 0.25, "GLD": 0.25, "IEF": 0.25}
                 if spy_prev < spy_200_prev and ur_prev > ur_12_prev: weights["SHY"] = 0.25
                 else: weights["QQQ"] = 0.25
-                
                 ret = sum([weights[t] * (df.loc[next_date, t] / df.loc[curr_date, t] - 1) for t in weights])
                 port_rets.append(float(ret)); idx_dates.append(next_date)
                 
         elif strat_id == 4:
-            # 오류 해결: list(set()) 적용
             tickers = list(set(strat4_off + strat4_def))
             df = m_data[tickers].dropna()
             if len(df) < 7: return None, None, None, None, None
@@ -355,7 +363,6 @@ def get_dashboard_backtest(strat_id, m_data, d_data, unrate_data):
         
         port_cum = port_cum.loc[common_dates]
         port_cum = port_cum / port_cum.iloc[0] * 100
-        
         spy_start_price = spy_m.loc[common_dates[0]]
         spy_cum = (spy_m.loc[common_dates] / spy_start_price) * 100
         
@@ -399,15 +406,6 @@ def render_dashboard_rebalancer(strat_id, buy_dict, data_df):
     budget = safe_float(budget_str)
     
     df_list = []
-    asset_names = {
-        "251350.KS": "KODEX 선진국MSCI World", "133690.KS": "TIGER 미국나스닥100",
-        "153130.KS": "KODEX 단기채권", "130680.KS": "TIGER 단기통안채",
-        "308620.KS": "KODEX 미국채10년선물", "132030.KS": "KODEX 단기채권PLUS",
-        "QQQ": "Invesco QQQ", "SPY": "SPDR S&P 500", "IEF": "iShares 7-10Y Treasury",
-        "BIL": "SPDR 1-3M T-Bill", "SHY": "iShares 1-3Y Treasury", "GLD": "SPDR Gold",
-        "IWD": "iShares Russell 1000 Value"
-    }
-    
     for tkr, w in buy_dict.items():
         price = 0.0
         if tkr in data_df.columns: price = float(data_df[tkr].iloc[-1])
@@ -425,10 +423,8 @@ def render_dashboard_rebalancer(strat_id, buy_dict, data_df):
     if df_list:
         base_df = pd.DataFrame(df_list)
         st.caption("💡 **안내:** 현재 계좌에 보유 중인 수량을 **[보유수량(주)]** 칸에 직접 입력하셔야 정확한 '살 종목수(추가매수/매도)'가 연산됩니다.")
-        
         edited_df = st.data_editor(base_df, disabled=["Ticker", "자산명", "목표비중(%)"], use_container_width=True, key=f"dash_edit_{strat_id}")
         res_df = edited_df.copy()
-        
         res_df["목표수량(주)"] = np.floor((budget * (res_df["목표비중(%)"]/100)) / res_df["현재가(원)"]).replace([np.inf, -np.inf, np.nan], 0)
         res_df["살 종목수(주)"] = res_df["목표수량(주)"] - res_df["보유수량(주)"]
         
@@ -439,8 +435,11 @@ def render_dashboard_rebalancer(strat_id, buy_dict, data_df):
         styled_df = res_df.style.format({"현재가(원)": "{:,.0f}원", "보유수량(주)": "{:,.0f}주", "목표수량(주)": "{:,.0f}주", "살 종목수(주)": "{:,.0f}주"})
         if hasattr(styled_df, "map"): styled_df = styled_df.map(color_action, subset=["살 종목수(주)"])
         else: styled_df = styled_df.applymap(color_action, subset=["살 종목수(주)"])
-            
         st.dataframe(styled_df, use_container_width=True)
+
+def get_fmt(val, curr):
+    if val == 0: return ""
+    return f"{int(val):,}" if curr == "KRW" else f"{val:.2f}"
 
 # ==========================================
 # 🎨 메인 타이틀 및 F&G 배너
@@ -482,18 +481,6 @@ st.sidebar.title("네비게이션")
 app_mode = st.sidebar.radio("원하시는 기능을 선택하세요:", ["🧮 프라이빗 투자 계산기", "📊 동적 자산배분 대시보드"])
 st.sidebar.caption("데이터 제공: Yahoo Finance, FRED, Naver, DART, CNN")
 
-strat1_off = ["QQQ", "VEU", "VWO", "TLT", "IEF", "DBC", "VNQ"]
-strat1_def = ["IEF", "BIL"]
-strat2_off = ["IBB", "IGV", "SKYY", "SOXX", "XLE", "XRT", "IEF", "DBC"]
-strat2_def = ["IEF", "BIL"]
-laa_assets = ["IWD", "GLD", "IEF", "QQQ", "SHY", "SPY"]
-strat4_off = ["251350.KS", "133690.KS"]
-strat4_def = ["153130.KS", "130680.KS", "308620.KS", "132030.KS"]
-all_tickers = list(set(strat1_off + strat1_def + strat2_off + strat2_def + laa_assets + strat4_off + strat4_def + ["TIP"]))
-
-def get_fmt(val, curr):
-    if val == 0: return ""
-    return f"{int(val):,}" if curr == "KRW" else f"{val:.2f}"
 
 # ==========================================
 # 1. 🧮 프라이빗 투자 계산기
@@ -665,7 +652,7 @@ if app_mode == "🧮 프라이빗 투자 계산기":
             "보유수량(주)": st.column_config.NumberColumn("보유수량(주)", min_value=0, format="%d")
         }
 
-        st.caption("💡 자산을 추가하려면 표의 빈 칸(아래쪽)을 클릭하고, 삭제하려면 맨 왼쪽 칸(인덱스)을 클릭 후 휴지통 아이콘(또는 Delete 키)을 누르세요.")
+        st.caption("💡 자산을 추가하려면 표의 빈 칸(아래쪽)을 클릭하고, 삭제하려면 맨 왼쪽 칸(인덱스)을 클릭 후 휴지통 아이콘(또는 Delete 키)을 누르세요. 미국/한국 자산이 섞여도 환율이 자동 적용되어 '살 종목수'가 계산됩니다.")
         edited_df = st.data_editor(st.session_state.asset_df_base, num_rows="dynamic", column_config=column_config, use_container_width=True, key="asset_editor")
         
         btn_col1, btn_col2 = st.columns([1, 4])
@@ -780,7 +767,7 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                     tickers_to_fetch = list(set(list(asset_weights.keys()) + ["SPY"]))
                     
                     try:
-                        # 백테스트용 순정 세션 적용
+                        # 백테스트를 위해 로컬에서 15년치 다운로드
                         bt_data = yf.download(tickers_to_fetch, start=bt_start, end=bt_end, threads=False)
                         if 'Close' in bt_data.columns:
                             bt_price = bt_data['Close']
@@ -960,9 +947,9 @@ if app_mode == "🧮 프라이빗 투자 계산기":
             for r in risks:
                 st.write(r)
 
-# ----------------------------------------
+# ==========================================
 # 2. 📊 동적 자산배분 대시보드
-# ----------------------------------------
+# ==========================================
 elif app_mode == "📊 동적 자산배분 대시보드":
     st.subheader("💡 동적 자산배분 실시간 리밸런싱 대시보드")
     try:
@@ -983,6 +970,7 @@ elif app_mode == "📊 동적 자산배분 대시보드":
             ])
             tip_score = get_baa_score(month_data["TIP"])
             
+            # --- 탭 1. 밸런스 전략 ---
             with tab1:
                 col1, col2 = st.columns([1, 1])
                 buy1_prev, buy1_curr = {}, {}
@@ -1013,6 +1001,7 @@ elif app_mode == "📊 동적 자산배분 대시보드":
                 st.divider()
                 render_dashboard_rebalancer("1", buy1_curr, data)
 
+            # --- 탭 2. 미국밸런스 섹터 전략 ---
             with tab2:
                 col3, col4 = st.columns([1, 1])
                 buy2_prev, buy2_curr = {}, {}
@@ -1041,6 +1030,7 @@ elif app_mode == "📊 동적 자산배분 대시보드":
                 st.divider()
                 render_dashboard_rebalancer("2", buy2_curr, data)
 
+            # --- 탭 3. LAA 전략 ---
             with tab3:
                 col5, col6 = st.columns([1, 1])
                 buy3_prev = {"IWD": "25.0%", "GLD": "25.0%", "IEF": "25.0%"}
@@ -1080,6 +1070,7 @@ elif app_mode == "📊 동적 자산배분 대시보드":
                 st.divider()
                 render_dashboard_rebalancer("3", buy3_curr, data)
 
+            # --- 탭 4. 한국형가속자산배분전략 ---
             with tab4:
                 col7, col8 = st.columns([1, 1])
                 buy4_prev, buy4_curr = {} , {}
