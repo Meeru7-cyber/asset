@@ -7,38 +7,33 @@ import pandas_datareader.data as web
 import requests
 import FinanceDataReader as fdr
 
+# 페이지 기본 설정
+st.set_page_config(page_title="프라이빗 통합 투자 플랫폼", layout="wide")
+
 # ==========================================
 # 🔐 비밀번호 인증 기능
 # ==========================================
 def check_password():
-    """비밀번호 인증을 위한 함수"""
     def password_entered():
-        if st.session_state["password"] == "7777":  # 여기에 원하시는 비번을 입력하세요
+        if st.session_state["password"] == "1234":  # 여기에 원하시는 비밀번호를 입력하세요
             st.session_state["password_correct"] = True
-            del st.session_state["password"]  # 비번 저장 안되게 삭제
+            del st.session_state["password"]
         else:
             st.session_state["password_correct"] = False
 
     if "password_correct" not in st.session_state:
-        # 첫 접속 시 입력창 표시
         st.text_input("접속 비밀번호를 입력하세요", type="password", on_change=password_entered, key="password")
         return False
     elif not st.session_state["password_correct"]:
-        # 비번 틀렸을 때
         st.text_input("접속 비밀번호를 입력하세요", type="password", on_change=password_entered, key="password")
         st.error("비밀번호가 틀렸습니다.")
         return False
     else:
-        # 인증 성공
         return True
 
-# 인증이 안 되었다면 여기서 멈춤
 if not check_password():
     st.stop()
 
-
-# 페이지 기본 설정
-st.set_page_config(page_title="프라이빗 통합 투자 플랫폼", layout="wide")
 
 # ==========================================
 # 🛡️ 야후 파이낸스 Rate Limit 차단 방지용 세션 위장
@@ -54,22 +49,17 @@ yf_session.headers.update({
 def safe_float(val):
     if isinstance(val, str):
         val = val.replace(",", "").strip()
-    try:
-        return float(val)
-    except:
-        return 0.0
+    try: return float(val)
+    except: return 0.0
 
 def format_number_str(key):
     val = str(st.session_state[key]).replace(",", "").strip()
     try:
-        if val == "": 
-            st.session_state[key] = "0"
+        if val == "": st.session_state[key] = "0"
         else:
             f_val = float(val)
-            if f_val.is_integer():
-                st.session_state[key] = f"{int(f_val):,}"
-            else:
-                st.session_state[key] = f"{f_val:,.2f}"
+            if f_val.is_integer(): st.session_state[key] = f"{int(f_val):,}"
+            else: st.session_state[key] = f"{f_val:,.2f}"
     except ValueError:
         st.session_state[key] = "0"
 
@@ -94,14 +84,12 @@ if "roe_val_10" not in st.session_state: st.session_state.roe_val_10 = 15.0
 def parse_dart_files(files, comp_name):
     eq = [0.0, 0.0, 0.0]
     ni = [0.0, 0.0, 0.0]
-    
     def to_float(val):
         try:
             v = str(val).replace(',', '').strip()
             if v == '-' or v == '': return 0.0
             return float(v)
         except: return 0.0
-
     for f in files:
         f.seek(0)
         try: df = pd.read_csv(f, sep='\t', encoding='utf-8')
@@ -109,21 +97,17 @@ def parse_dart_files(files, comp_name):
             f.seek(0)
             try: df = pd.read_csv(f, sep='\t', encoding='cp949')
             except: continue
-
         if '회사명' not in df.columns or '항목명' not in df.columns: continue
         cdf = df[df['회사명'].astype(str).str.contains(comp_name, na=False)]
         if cdf.empty: continue
-
         eq_rows = cdf[cdf['항목명'].astype(str).str.contains('자본총계', na=False)]
         if not eq_rows.empty:
             for i, col in enumerate(['당기', '전기', '전전기']):
                 if col in eq_rows.columns: eq[i] = to_float(eq_rows.iloc[0][col])
-
         ni_rows = cdf[cdf['항목명'].astype(str).str.contains('당기순이익', na=False)]
         if not ni_rows.empty:
             for i, col in enumerate(['당기', '전기', '전전기']):
                 if col in ni_rows.columns: ni[i] = to_float(ni_rows.iloc[0][col])
-                    
     return eq, ni
 
 # ==========================================
@@ -131,16 +115,13 @@ def parse_dart_files(files, comp_name):
 # ==========================================
 @st.cache_data(ttl=3600)
 def get_exchange_rate():
-    """실시간 원/달러 환율 추출"""
     try:
-        t = yf.Ticker("KRW=X", session=yf_session)
+        t = yf.Ticker("KRW=X")
         price = float(t.history(period="1d")['Close'].iloc[-1])
         return price if price > 500 else 1350.0
-    except:
-        return 1350.0
+    except: return 1350.0
 
 def detect_currency(ticker):
-    """티커를 기반으로 국가/통화를 자동 인식"""
     if not ticker or "직접 입력" in ticker: return "KRW"
     if ticker.endswith('.KS') or ticker.endswith('.KQ'): return "KRW"
     if ticker.isalpha(): return "USD"
@@ -149,7 +130,8 @@ def detect_currency(ticker):
 @st.cache_data(ttl=3600)
 def get_fear_and_greed():
     try:
-        res = requests.get("https://production.dataviz.cnn.io/index/fearandgreed/graphdata", headers=yf_session.headers, timeout=5)
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        res = requests.get("https://production.dataviz.cnn.io/index/fearandgreed/graphdata", headers=headers, timeout=5)
         if res.status_code == 200:
             data = res.json()
             return int(data['fear_and_greed']['score']), data['fear_and_greed']['rating']
@@ -192,39 +174,30 @@ def get_all_search_options():
 @st.cache_data(ttl=600)
 def get_stock_info(ticker):
     if not ticker or ticker == "직접 입력": return 0.0, 0.0
-    price = 0.0
-    dividend = 0.0
-    
+    price, dividend = 0.0, 0.0
     if ticker.endswith('.KS') or ticker.endswith('.KQ'):
         code = ticker.split('.')[0]
         try:
-            res = requests.get(f"https://m.stock.naver.com/api/stock/{code}/basic", headers=yf_session.headers, timeout=3)
-            if res.status_code == 200:
-                price = float(res.json()['result']['closePrice'].replace(',', ''))
+            res = requests.get(f"https://m.stock.naver.com/api/stock/{code}/basic", headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
+            if res.status_code == 200: price = float(res.json()['result']['closePrice'].replace(',', ''))
         except: pass
-        
     try:
-        t = yf.Ticker(ticker, session=yf_session)
+        t = yf.Ticker(ticker)
         if price == 0.0:
             hist = t.history(period="1d")
-            if not hist.empty:
-                price = float(hist['Close'].iloc[-1])
+            if not hist.empty: price = float(hist['Close'].iloc[-1])
         info = t.info
-        # 배당금 조회 개선 (누락 시 0.0으로 안전하게 반환)
         div = info.get('dividendRate')
-        if div is None:
-            div = info.get('trailingAnnualDividendRate', 0.0)
+        if div is None: div = info.get('trailingAnnualDividendRate', 0.0)
         dividend = float(div) if div is not None else 0.0
-    except:
-        pass
-        
+    except: pass
     return price, dividend
 
 @st.cache_data(ttl=3600)
 def get_pbr_roe_price(ticker):
     if not ticker or "직접 입력" in ticker: return 0.0, 0.0, 0.0, 0.0, 0.0
     try:
-        t = yf.Ticker(ticker, session=yf_session)
+        t = yf.Ticker(ticker)
         hist = t.history(period="1d")
         price = float(hist['Close'].iloc[-1]) if not hist.empty else 0.0
         
@@ -232,9 +205,8 @@ def get_pbr_roe_price(ticker):
         if ticker.endswith('.KS') or ticker.endswith('.KQ'):
             code = ticker.split('.')[0]
             try:
-                res = requests.get(f"https://m.stock.naver.com/api/stock/{code}/basic", headers=yf_session.headers, timeout=3)
-                if res.status_code == 200:
-                    pbr = float(res.json()['result']['pbr'])
+                res = requests.get(f"https://m.stock.naver.com/api/stock/{code}/basic", headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
+                if res.status_code == 200: pbr = float(res.json()['result']['pbr'])
             except: pass
             
         if pbr == 0.0:
@@ -242,7 +214,6 @@ def get_pbr_roe_price(ticker):
             bps = info.get('bookValue', 0)
             if bps and bps > 0 and price > 0: pbr = price / bps
             else: pbr = info.get('priceToBook', 1.0)
-        
         if not pbr or pbr <= 0: pbr = 1.0
         
         roes = []
@@ -251,13 +222,11 @@ def get_pbr_roe_price(ticker):
             bs = t.balance_sheet
             ni_keys = ['Net Income', 'NetIncome', 'Net Income Common Stockholders']
             eq_keys = ['Stockholders Equity', 'Total Stockholder Equity']
-            
             ni_row, eq_row = None, None
             for k in ni_keys:
                 if k in inc.index: ni_row = inc.loc[k]; break
             for k in eq_keys:
                 if k in bs.index: eq_row = bs.loc[k]; break
-                    
             if ni_row is not None and eq_row is not None:
                 for date in ni_row.index:
                     if date in eq_row.index:
@@ -272,19 +241,19 @@ def get_pbr_roe_price(ticker):
         avg_roe_10 = sum(roes[:10]) / len(roes[:10]) if len(roes[:10]) > 0 else avg_roe_5
         
         return float(pbr), float(avg_roe_3), float(avg_roe_5), float(avg_roe_10), float(price)
-    except:
-        return 1.0, 0.0, 0.0, 0.0, 0.0
+    except: return 1.0, 0.0, 0.0, 0.0, 0.0
 
 @st.cache_data(ttl=14400)
 def load_financial_data(tickers):
-    start_date = (datetime.date.today() - datetime.timedelta(days=730)).strftime('%Y-%m-%d')
-    df = yf.download(tickers, start=start_date, session=yf_session)
+    """대시보드 및 롱텀 백테스트용 데이터 (15년치)"""
+    start_date = "2010-01-01" 
+    df = yf.download(tickers, start=start_date, threads=False, session=yf_session)
     if 'Close' in df.columns: df = df['Close']
     return df.ffill().dropna(how='all')
 
 @st.cache_data(ttl=14400)
 def load_fred_data():
-    start_date = (datetime.date.today() - datetime.timedelta(days=730)).strftime('%Y-%m-%d')
+    start_date = "2010-01-01"
     return web.DataReader("UNRATE", "fred", start_date)
 
 def get_baa_score(series, idx=-1):
@@ -295,23 +264,152 @@ def get_aaa_score(series, idx=-1):
 
 
 # ==========================================
-# 🧮 대시보드 리밸런싱 렌더링 함수
+# 📊 대시보드 내부 백테스팅 엔진
 # ==========================================
+@st.cache_data(ttl=86400)
+def get_dashboard_backtest(strat_id, m_data, d_data, unrate_data):
+    """각 전략의 과거 수익률을 시뮬레이션하여 CAGR, MDD, 차트 도출"""
+    try:
+        strat1_off = ["QQQ", "VEU", "VWO", "TLT", "IEF", "DBC", "VNQ"]; strat1_def = ["IEF", "BIL"]
+        strat2_off = ["IBB", "IGV", "SKYY", "SOXX", "XLE", "XRT", "IEF", "DBC"]; strat2_def = ["IEF", "BIL"]
+        laa_assets = ["IWD", "GLD", "IEF", "QQQ", "SHY", "SPY"]
+        strat4_off = ["251350.KS", "133690.KS"]; strat4_def = ["153130.KS", "130680.KS", "308620.KS", "132030.KS"]
+        
+        port_rets, idx_dates = [], []
+        
+        if strat_id == 1 or strat_id == 2:
+            off_tkrs = strat1_off if strat_id == 1 else strat2_off
+            def_tkrs = strat1_def if strat_id == 1 else strat2_def
+            tickers = ["TIP"] + off_tkrs + def_tkrs
+            df = m_data[tickers].dropna()
+            if len(df) < 13: return None, None, None, None, None
+            
+            mom_1 = df / df.shift(1) - 1; mom_3 = df / df.shift(3) - 1
+            mom_6 = df / df.shift(6) - 1; mom_9 = df / df.shift(9) - 1; mom_12 = df / df.shift(12) - 1
+            baa_scores = mom_1 + mom_3 + mom_6 + mom_9 + mom_12
+            
+            for i in range(12, len(df)-1):
+                curr_date, next_date = df.index[i], df.index[i+1]
+                tip_score = baa_scores.loc[curr_date, "TIP"]
+                if tip_score > 0:
+                    top4 = baa_scores.loc[curr_date, off_tkrs].nlargest(4).index
+                    weights = {t: 0.25 for t in top4}
+                else:
+                    top1 = baa_scores.loc[curr_date, def_tkrs].nlargest(1).index
+                    weights = {t: 1.0 for t in top1}
+                ret = sum([weights[t] * (df.loc[next_date, t] / df.loc[curr_date, t] - 1) for t in weights])
+                port_rets.append(ret); idx_dates.append(next_date)
+                
+        elif strat_id == 3:
+            df = m_data[laa_assets].dropna()
+            if len(df) < 13: return None, None, None, None, None
+            
+            d_spy = d_data['SPY'].dropna(); d_spy_200 = d_spy.rolling(200).mean()
+            u_df = unrate_data['UNRATE'].dropna(); u_12 = u_df.rolling(12).mean()
+            
+            for i in range(12, len(df)-1):
+                curr_date, next_date = df.index[i], df.index[i+1]
+                spy_mask = d_spy.index <= curr_date
+                if not spy_mask.any(): continue
+                spy_prev, spy_200_prev = d_spy[spy_mask].iloc[-1], d_spy_200[spy_mask].iloc[-1]
+                
+                ur_mask = u_df.index <= curr_date
+                if not ur_mask.any(): continue
+                ur_prev, ur_12_prev = u_df[ur_mask].iloc[-1], u_12[ur_mask].iloc[-1]
+                
+                weights = {"IWD": 0.25, "GLD": 0.25, "IEF": 0.25}
+                if spy_prev < spy_200_prev and ur_prev > ur_12_prev: weights["SHY"] = 0.25
+                else: weights["QQQ"] = 0.25
+                
+                ret = sum([weights[t] * (df.loc[next_date, t] / df.loc[curr_date, t] - 1) for t in weights])
+                port_rets.append(ret); idx_dates.append(next_date)
+                
+        elif strat_id == 4:
+            tickers = strat4_off + strat4_def
+            df = m_data[tickers].dropna()
+            if len(df) < 7: return None, None, None, None, None
+            
+            mom_1 = df / df.shift(1) - 1; mom_3 = df / df.shift(3) - 1; mom_6 = df / df.shift(6) - 1
+            aaa_scores = mom_1 + mom_3 + mom_6
+            
+            for i in range(6, len(df)-1):
+                curr_date, next_date = df.index[i], df.index[i+1]
+                max_sc = aaa_scores.loc[curr_date, strat4_off].max()
+                if max_sc > 0:
+                    top1 = aaa_scores.loc[curr_date, strat4_off].nlargest(1).index
+                    weights = {t: 1.0 for t in top1}
+                else:
+                    top1 = mom_1.loc[curr_date, strat4_def].nlargest(1).index
+                    weights = {t: 1.0 for t in top1}
+                ret = sum([weights[t] * (df.loc[next_date, t] / df.loc[curr_date, t] - 1) for t in weights])
+                port_rets.append(ret); idx_dates.append(next_date)
+                
+        if not port_rets: return None, None, None, None, None
+        
+        port_cum = (1 + pd.Series(port_rets, index=idx_dates)).cumprod() * 100
+        spy_m = m_data['SPY'].dropna()
+        common_dates = port_cum.index.intersection(spy_m.index)
+        if len(common_dates) < 2: return None, None, None, None, None
+        
+        port_cum = port_cum.loc[common_dates]
+        port_cum = port_cum / port_cum.iloc[0] * 100
+        
+        spy_start_price = spy_m.loc[common_dates[0]]
+        spy_cum = (spy_m.loc[common_dates] / spy_start_price) * 100
+        
+        years = len(port_cum) / 12
+        p_cagr = (port_cum.iloc[-1] / 100) ** (1 / years) - 1
+        s_cagr = (spy_cum.iloc[-1] / 100) ** (1 / years) - 1
+        p_mdd = (port_cum / port_cum.cummax() - 1).min()
+        s_mdd = (spy_cum / spy_cum.cummax() - 1).min()
+        
+        chart_df = pd.DataFrame({"전략 포트폴리오": port_cum, "SPY (벤치마크)": spy_cum})
+        return p_cagr, p_mdd, s_cagr, s_mdd, chart_df
+    except Exception as e:
+        return None, None, None, None, None
+
+def render_dashboard_backtest_ui(strat_id, m_data, d_data, unrate_data):
+    st.write("#### 📊 전략 누적 성과 백테스트 (최대 가용 기간)")
+    p_cagr, p_mdd, s_cagr, s_mdd, chart_df = get_dashboard_backtest(strat_id, m_data, d_data, unrate_data)
+    
+    if chart_df is not None:
+        col_m, col_c = st.columns([1, 2])
+        with col_m:
+            p_tot = (chart_df["전략 포트폴리오"].iloc[-1] / 100) - 1
+            s_tot = (chart_df["SPY (벤치마크)"].iloc[-1] / 100) - 1
+            st.metric("총 누적 수익률", f"{p_tot*100:.2f}%", f"SPY: {s_tot*100:.2f}%")
+            st.metric("연평균 수익률 (CAGR)", f"{p_cagr*100:.2f}%", f"SPY: {s_cagr*100:.2f}%")
+            st.metric("최대 낙폭 (MDD)", f"{p_mdd*100:.2f}%", f"SPY: {s_mdd*100:.2f}%", delta_color="inverse")
+            
+            start_dt = chart_df.index[0].strftime('%Y-%m-%d')
+            end_dt = chart_df.index[-1].strftime('%Y-%m-%d')
+            st.caption(f"🗓️ 백테스트 기간:<br>{start_dt} ~ {end_dt}", unsafe_allow_html=True)
+        with col_c:
+            st.line_chart(chart_df)
+    else:
+        st.info("데이터가 부족하여 백테스트를 수행할 수 없습니다.")
+
 def render_dashboard_rebalancer(strat_id, buy_dict, data_df):
     st.write("#### 🧮 전략 맞춤형 실시간 리밸런싱 계산기")
-    
     b_col1, b_col2 = st.columns([1, 3])
     budget_key = f"budget_dash{strat_id}"
     budget_str = b_col1.text_input("총 투자 운용 금액 (원)", key=budget_key, on_change=format_number_str, args=(budget_key,))
     budget = safe_float(budget_str)
     
     df_list = []
+    asset_names = {
+        "251350.KS": "KODEX 선진국MSCI World", "133690.KS": "TIGER 미국나스닥100",
+        "153130.KS": "KODEX 단기채권", "130680.KS": "TIGER 단기통안채",
+        "308620.KS": "KODEX 미국채10년선물", "132030.KS": "KODEX 단기채권PLUS",
+        "QQQ": "Invesco QQQ", "SPY": "SPDR S&P 500", "IEF": "iShares 7-10Y Treasury",
+        "BIL": "SPDR 1-3M T-Bill", "SHY": "iShares 1-3Y Treasury", "GLD": "SPDR Gold",
+        "IWD": "iShares Russell 1000 Value"
+    }
+    
     for tkr, w in buy_dict.items():
         price = 0.0
-        if tkr in data_df.columns:
-            price = float(data_df[tkr].iloc[-1])
-        if price == 0.0 or pd.isna(price):
-            price, _ = get_stock_info(tkr)
+        if tkr in data_df.columns: price = float(data_df[tkr].iloc[-1])
+        if price == 0.0 or pd.isna(price): price, _ = get_stock_info(tkr)
             
         weight = float(w.replace('%', '')) if isinstance(w, str) else float(w)
         df_list.append({
@@ -389,7 +487,6 @@ strat2_def = ["IEF", "BIL"]
 laa_assets = ["IWD", "GLD", "IEF", "QQQ", "SHY", "SPY"]
 strat4_off = ["251350.KS", "133690.KS"]
 strat4_def = ["153130.KS", "130680.KS", "308620.KS", "132030.KS"]
-
 asset_names = {
     "251350.KS": "KODEX 선진국MSCI World", "133690.KS": "TIGER 미국나스닥100",
     "153130.KS": "KODEX 단기채권", "130680.KS": "TIGER 단기통안채",
@@ -400,13 +497,12 @@ asset_names = {
 }
 all_tickers = list(set(strat1_off + strat1_def + strat2_off + strat2_def + laa_assets + strat4_off + strat4_def + ["TIP"]))
 
-# 통화 표기 유틸리티
 def get_fmt(val, curr):
     if val == 0: return ""
     return f"{int(val):,}" if curr == "KRW" else f"{val:.2f}"
 
 # ==========================================
-# [모드 1] 🧮 프라이빗 투자 계산기
+# 1. 🧮 프라이빗 투자 계산기
 # ==========================================
 if app_mode == "🧮 프라이빗 투자 계산기":
     
@@ -433,7 +529,6 @@ if app_mode == "🧮 프라이빗 투자 계산기":
             
         fetched_price, fetched_div = get_stock_info(stock_ticker) if stock_ticker else (0.0, 0.0)
         
-        # 통화 단위 자동 설정 및 수동 오버라이드
         auto_curr = detect_currency(stock_ticker)
         curr_override = st.radio("통화 기준 선택", ["자동 인식", "원화 (KRW)", "달러 (USD)"], horizontal=True, key="curr_stock")
         final_curr = auto_curr if curr_override == "자동 인식" else ("KRW" if "KRW" in curr_override else "USD")
@@ -576,7 +671,7 @@ if app_mode == "🧮 프라이빗 투자 계산기":
             "보유수량(주)": st.column_config.NumberColumn("보유수량(주)", min_value=0, format="%d")
         }
 
-        st.caption("💡 자산을 추가하려면 표의 빈 칸(아래쪽)을 클릭하고, 삭제하려면 맨 왼쪽 칸(인덱스)을 클릭 후 휴지통 아이콘(또는 Delete 키)을 누르세요. 미국/한국 자산이 섞여도 환율이 자동 적용되어 '살 종목수'가 계산됩니다.")
+        st.caption("💡 자산을 추가하려면 표의 빈 칸(아래쪽)을 클릭하고, 삭제하려면 맨 왼쪽 칸(인덱스)을 클릭 후 휴지통 아이콘(또는 Delete 키)을 누르세요.")
         edited_df = st.data_editor(st.session_state.asset_df_base, num_rows="dynamic", column_config=column_config, use_container_width=True, key="asset_editor")
         
         btn_col1, btn_col2 = st.columns([1, 4])
@@ -601,13 +696,7 @@ if app_mode == "🧮 프라이빗 투자 계산기":
             
         st.write("📊 **리밸런싱 실시간 연산 결과 (자동 환율 적용)**")
         
-        # 목표 수량 산출 (환율 변환)
         res_df = edited_df.copy()
-        
-        # 총 예산을 해당 종목의 통화로 맞춰서 수량 도출
-        # 만약 budget이 KRW이고, 종목이 USD라면 -> target_amount_krw / (price_usd * exch_rate)
-        # 만약 budget이 USD이고, 종목이 KRW라면 -> target_amount_usd / (price_krw / exch_rate)
-        
         target_shares_list = []
         for idx, row in res_df.iterrows():
             if row["현재가"] <= 0:
@@ -616,10 +705,9 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                 
             w = row["목표비중(%)"] / 100.0
             
-            # 자산의 가격을 기준 통화(Base Currency)로 변환
             if base_curr == "원화 (KRW)":
                 price_in_base = row["현재가"] if row["통화"] == "KRW" else row["현재가"] * EXCH_RATE
-            else: # 달러 기준
+            else: 
                 price_in_base = row["현재가"] if row["통화"] == "USD" else row["현재가"] / EXCH_RATE
                 
             if price_in_base > 0:
@@ -698,7 +786,7 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                     tickers_to_fetch = list(set(list(asset_weights.keys()) + ["SPY"]))
                     
                     try:
-                        bt_data = yf.download(tickers_to_fetch, start=bt_start, end=bt_end, session=yf_session)
+                        bt_data = yf.download(tickers_to_fetch, start=bt_start, end=bt_end, threads=False)
                         if 'Close' in bt_data.columns:
                             bt_price = bt_data['Close']
                         else:
@@ -924,7 +1012,9 @@ elif app_mode == "📊 동적 자산배분 대시보드":
                 with col2:
                     st.write(f"🎯 **이번 달 목표 비중 ({month_data.index[-1].strftime('%m월')} 기준)**")
                     st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy1_curr.items()]))
-                    
+                
+                st.divider()
+                render_dashboard_backtest_ui(1, month_data, data, unrate_data)
                 st.divider()
                 render_dashboard_rebalancer("1", buy1_curr, data)
 
@@ -950,7 +1040,9 @@ elif app_mode == "📊 동적 자산배분 대시보드":
                 with col4:
                     st.write(f"🎯 **이번 달 목표 비중 ({month_data.index[-1].strftime('%m월')} 기준)**")
                     st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy2_curr.items()]))
-                    
+                
+                st.divider()
+                render_dashboard_backtest_ui(2, month_data, data, unrate_data)
                 st.divider()
                 render_dashboard_rebalancer("2", buy2_curr, data)
 
@@ -989,6 +1081,8 @@ elif app_mode == "📊 동적 자산배분 대시보드":
                     st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy3_curr.items()]))
 
                 st.divider()
+                render_dashboard_backtest_ui(3, month_data, data, unrate_data)
+                st.divider()
                 render_dashboard_rebalancer("3", buy3_curr, data)
 
             with tab4:
@@ -1017,6 +1111,8 @@ elif app_mode == "📊 동적 자산배분 대시보드":
                     st.write(f"🎯 **이번 달 목표 비중 ({month_data.index[-1].strftime('%m월')} 기준)**")
                     st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy4_curr.items()]))
 
+                st.divider()
+                render_dashboard_backtest_ui(4, month_data, data, unrate_data)
                 st.divider()
                 render_dashboard_rebalancer("4", buy4_curr, data)
 
