@@ -151,12 +151,22 @@ def detect_currency(ticker):
 @st.cache_data(ttl=3600)
 def get_fear_and_greed():
     try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
+        # 🛡️ CNN 서버의 강력한 봇 차단(418/403 에러) 우회를 위해 헤더를 실제 브라우저와 동일하게 강화
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+            'Accept': 'application/json, text/plain, */*',
+            'Referer': 'https://edition.cnn.com/markets/fear-and-greed',
+            'Origin': 'https://edition.cnn.com'
+        }
         res = requests.get("https://production.dataviz.cnn.io/index/fearandgreed/graphdata", headers=headers, timeout=5)
+        
         if res.status_code == 200:
             data = res.json()
-            return int(data['fear_and_greed']['score']), data['fear_and_greed']['rating']
-    except: pass
+            return int(data['fear_and_greed']['score']), data['fear_and_greed']['rating'].title()
+    except Exception as e: 
+        print(f"F&G Index Error: {e}") # 터미널 디버깅용
+        pass
+    
     return None, None
 
 @st.cache_data(ttl=86400)
