@@ -177,7 +177,7 @@ def get_all_search_options():
         nyse_list = (nyse['Name'] + " (" + nyse['Symbol'] + ")").tolist()
         all_auto = list(set(kospi_list + kosdaq_list + etf_list + sp500_list + nasdaq_list + nyse_list))
     except:
-        all_auto = ["삼성전자 (005930.KS)", "KODEX 200 (069500.KS)", "ACE KRX금현물 (411060.KS)"]
+        all_auto = ["삼성전자 (005930.KS)", "KODEX 200 (069500.KS)", "ACE KRX금현물 (411060.KS)", "TIGER 200 (102110.KS)"]
         
     us_etfs_and_commodities = [
         "SPDR S&P 500 ETF (SPY)", "Invesco QQQ Trust (QQQ)", "Vanguard S&P 500 ETF (VOO)", "Invesco NASDAQ 100 ETF (QQQM)",
@@ -189,7 +189,17 @@ def get_all_search_options():
         "Technology Select Sector SPDR (XLK)", "Health Care Select Sector SPDR (XLV)", "Financial Select Sector SPDR (XLF)", 
         "iShares Semiconductor ETF (SOXX)", "VanEck Semiconductor ETF (SMH)", "Schwab US Dividend Equity ETF (SCHD)"
     ]
-    combined = list(set(all_auto + us_etfs_and_commodities))
+    
+    kr_essential_etfs = [
+        "TIGER 200 (102110.KS)",
+        "KODEX 200 (069500.KS)",
+        "TIGER 미국나스닥100 (133690.KS)",
+        "KODEX 선진국MSCI World (251350.KS)",
+        "KODEX 단기채권 (153130.KS)",
+        "TIGER 단기통안채 (130680.KS)"
+    ]
+    
+    combined = list(set(all_auto + us_etfs_and_commodities + kr_essential_etfs))
     return ["직접 입력 (여기에 없는 종목)"] + sorted(combined)
 
 @st.cache_data(ttl=600)
@@ -283,38 +293,47 @@ def get_aaa_score(series, idx=-1):
     return sum([(series.iloc[idx] - series.iloc[idx-m]) / series.iloc[idx-m] for m in [1, 3, 6]])
 
 # ==========================================
-# 📊 대시보드 내부 백테스팅 엔진 (SPY & QQQ 비교 추가)
+# 📊 대시보드 내부 백테스팅 엔진 (거치식/적립식 통합 모델)
 # ==========================================
 @st.cache_data(ttl=86400)
-def get_dashboard_backtest(strat_id, m_data, d_data, unrate_data):
+def get_dashboard_backtest(strat_id, m_data, d_data, unrate_data, inv_type="거치식"):
     try:
         port_rets, idx_dates = [], []
         if strat_id == 1 or strat_id == 2:
             off_tkrs = strat1_off if strat_id == 1 else strat2_off
             def_tkrs = strat1_def if strat_id == 1 else strat2_def
-            tickers = list(set(["TIP"] + off_tkrs + def_tkrs)) 
+            
+            off_tkrs = [t for t in off_tkrs if t in m_data.columns]
+            def_tkrs = [t for t in def_tkrs if t in m_data.columns]
+            tickers = list(set(["TIP"] + off_tkrs + def_tkrs))
+            tickers = [t for t in tickers if t in m_data.columns]
+            
             df = m_data[tickers].dropna()
-            if len(df) < 13: return None, None
+            if len(df) < 13 or "TIP" not in df.columns: return None, None
             
             mom_1 = df / df.shift(1) - 1; mom_3 = df / df.shift(3) - 1
             mom_6 = df / df.shift(6) - 1; mom_9 = df / df.shift(9) - 1; mom_12 = df / df.shift(12) - 1
-            baa_scores = mom_1 + mom_3 + mom_6 + mom_9 + mom_12
+            baa_scores = mom_1 + mom_3 + mom_6 + mom_9 + 12
             
             for i in range(12, len(df)-1):
                 curr_date, next_date = df.index[i], df.index[i+1]
                 tip_score = baa_scores.loc[curr_date, "TIP"]
-                if tip_score > 0:
+                if tip_score > 0 and off_tkrs:
                     top4 = baa_scores.loc[curr_date, off_tkrs].nlargest(4).index
                     weights = {t: 0.25 for t in top4}
-                else:
+                elif def_tkrs:
                     top1 = baa_scores.loc[curr_date, def_tkrs].nlargest(1).index
                     weights = {t: 1.0 for t in top1}
+                else: continue
+                    
                 ret = sum([weights[t] * (df.loc[next_date, t] / df.loc[curr_date, t] - 1) for t in weights])
                 port_rets.append(float(ret)); idx_dates.append(next_date)
                 
         elif strat_id == 3:
-            df = m_data[laa_assets].dropna()
-            if len(df) < 13: return None, None
+            valid_laa = [t for t in laa_assets if t in m_data.columns]
+            df = m_data[valid_laa].dropna()
+            if len(df) < 13 or "SPY" not in d_data.columns or "UNRATE" not in unrate_data.columns: return None, None
+            
             d_spy = d_data['SPY'].dropna(); d_spy_200 = d_spy.rolling(200).mean()
             u_df = unrate_data['UNRATE'].dropna(); u_12 = u_df.rolling(12).mean()
             
@@ -327,14 +346,23 @@ def get_dashboard_backtest(strat_id, m_data, d_data, unrate_data):
                 if not ur_mask.any(): continue
                 ur_prev, ur_12_prev = u_df[ur_mask].iloc[-1], u_12[ur_mask].iloc[-1]
                 
-                weights = {"IWD": 0.25, "GLD": 0.25, "IEF": 0.25}
-                if spy_prev < spy_200_prev and ur_prev > ur_12_prev: weights["SHY"] = 0.25
-                else: weights["QQQ"] = 0.25
-                ret = sum([weights[t] * (df.loc[next_date, t] / df.loc[curr_date, t] - 1) for t in weights])
-                port_rets.append(float(ret)); idx_dates.append(next_date)
+                weights = {}
+                for t in ["IWD", "GLD", "IEF"]: 
+                    if t in df.columns: weights[t] = 0.25
+                
+                if spy_prev < spy_200_prev and ur_prev > ur_12_prev: 
+                    if "SHY" in df.columns: weights["SHY"] = 0.25
+                else: 
+                    if "QQQ" in df.columns: weights["QQQ"] = 0.25
+                    
+                if weights:
+                    ret = sum([weights[t] * (df.loc[next_date, t] / df.loc[curr_date, t] - 1) for t in weights])
+                    port_rets.append(float(ret)); idx_dates.append(next_date)
                 
         elif strat_id == 4:
-            tickers = list(set(strat4_off + strat4_def))
+            off_tkrs = [t for t in strat4_off if t in m_data.columns]
+            def_tkrs = [t for t in strat4_def if t in m_data.columns]
+            tickers = list(set(off_tkrs + def_tkrs))
             df = m_data[tickers].dropna()
             if len(df) < 7: return None, None
             
@@ -343,64 +371,104 @@ def get_dashboard_backtest(strat_id, m_data, d_data, unrate_data):
             
             for i in range(6, len(df)-1):
                 curr_date, next_date = df.index[i], df.index[i+1]
-                max_sc = aaa_scores.loc[curr_date, strat4_off].max()
-                if max_sc > 0:
-                    top1 = aaa_scores.loc[curr_date, strat4_off].nlargest(1).index
+                max_sc = aaa_scores.loc[curr_date, off_tkrs].max() if off_tkrs else -999
+                
+                if max_sc > 0 and off_tkrs:
+                    top1 = aaa_scores.loc[curr_date, off_tkrs].nlargest(1).index
                     weights = {t: 1.0 for t in top1}
-                else:
-                    top1 = mom_1.loc[curr_date, strat4_def].nlargest(1).index
+                elif def_tkrs:
+                    top1 = mom_1.loc[curr_date, def_tkrs].nlargest(1).index
                     weights = {t: 1.0 for t in top1}
+                else: continue
+                    
                 ret = sum([weights[t] * (df.loc[next_date, t] / df.loc[curr_date, t] - 1) for t in weights])
                 port_rets.append(float(ret)); idx_dates.append(next_date)
                 
         if not port_rets: return None, None
         
-        port_cum = (1 + pd.Series(port_rets, index=idx_dates)).cumprod() * 100
+        if 'SPY' not in m_data.columns: return None, None
         spy_m = m_data['SPY'].dropna()
-        
-        # QQQ가 데이터셋에 없으면 별도로 로드
         if 'QQQ' in m_data.columns: qqq_m = m_data['QQQ'].dropna()
         else: qqq_m = load_financial_data(['QQQ']).resample('ME').last()
         
-        common_dates = port_cum.index.intersection(spy_m.index).intersection(qqq_m.index)
+        port_series = pd.Series(port_rets, index=idx_dates)
+        s_rets_full = spy_m.pct_change().dropna()
+        q_rets_full = qqq_m.pct_change().dropna()
+        
+        common_dates = port_series.index.intersection(s_rets_full.index).intersection(q_rets_full.index)
         if len(common_dates) < 2: return None, None
         
-        port_cum = port_cum.loc[common_dates]
-        port_cum = port_cum / port_cum.iloc[0] * 100
+        p_rets = port_series.loc[common_dates]
+        s_rets = s_rets_full.loc[common_dates]
+        q_rets = q_rets_full.loc[common_dates]
         
-        spy_m_c = spy_m.loc[common_dates]
-        spy_cum = (spy_m_c / spy_m_c.iloc[0]) * 100
+        years = len(common_dates) / 12
         
-        qqq_m_c = qqq_m.loc[common_dates]
-        qqq_cum = (qqq_m_c / qqq_m_c.iloc[0]) * 100
-        
-        years = len(port_cum) / 12
-        p_tot = (port_cum.iloc[-1] / 100) - 1
-        s_tot = (spy_cum.iloc[-1] / 100) - 1
-        q_tot = (qqq_cum.iloc[-1] / 100) - 1
-        
-        p_cagr = (port_cum.iloc[-1] / 100) ** (1 / years) - 1
-        s_cagr = (spy_cum.iloc[-1] / 100) ** (1 / years) - 1
-        q_cagr = (qqq_cum.iloc[-1] / 100) ** (1 / years) - 1
-        
-        p_mdd = (port_cum / port_cum.cummax() - 1).min()
-        s_mdd = (spy_cum / spy_cum.cummax() - 1).min()
-        q_mdd = (qqq_cum / qqq_cum.cummax() - 1).min()
-        
-        # Sharpe
-        p_series_ret = pd.Series(port_rets, index=idx_dates).loc[common_dates].dropna()
-        s_series_ret = spy_m_c.pct_change().dropna()
-        q_series_ret = qqq_m_c.pct_change().dropna()
-        
-        p_sharpe = (p_series_ret.mean() / p_series_ret.std() * np.sqrt(12)) if p_series_ret.std() != 0 else 0
-        s_sharpe = (s_series_ret.mean() / s_series_ret.std() * np.sqrt(12)) if s_series_ret.std() != 0 else 0
-        q_sharpe = (q_series_ret.mean() / q_series_ret.std() * np.sqrt(12)) if q_series_ret.std() != 0 else 0
-        
-        chart_df = pd.DataFrame({
-            "전략 포트폴리오": port_cum, 
-            "SPY (S&P 500)": spy_cum,
-            "QQQ (NASDAQ)": qqq_cum
-        })
+        if inv_type == "월적립식":
+            p_bal, s_bal, q_bal, pr_list = [], [], [], []
+            p_curr, s_curr, q_curr, pr = 0, 0, 0, 0
+            
+            for d in common_dates:
+                pr += 100
+                pr_list.append(pr)
+                p_curr = (p_curr + 100) * (1 + p_rets[d])
+                s_curr = (s_curr + 100) * (1 + s_rets[d])
+                q_curr = (q_curr + 100) * (1 + q_rets[d])
+                
+                p_bal.append(p_curr)
+                s_bal.append(s_curr)
+                q_bal.append(q_curr)
+                
+            p_bal = pd.Series(p_bal, index=common_dates)
+            s_bal = pd.Series(s_bal, index=common_dates)
+            q_bal = pd.Series(q_bal, index=common_dates)
+            pr_series = pd.Series(pr_list, index=common_dates)
+            
+            p_tot = (p_bal.iloc[-1] / pr_series.iloc[-1]) - 1
+            s_tot = (s_bal.iloc[-1] / pr_series.iloc[-1]) - 1
+            q_tot = (q_bal.iloc[-1] / pr_series.iloc[-1]) - 1
+            
+            p_cagr = ((p_tot + 1) ** (2 / years)) - 1 if years > 0 else 0
+            s_cagr = ((s_tot + 1) ** (2 / years)) - 1 if years > 0 else 0
+            q_cagr = ((q_tot + 1) ** (2 / years)) - 1 if years > 0 else 0
+            
+            p_mdd = (p_bal / p_bal.cummax() - 1).min()
+            s_mdd = (s_bal / s_bal.cummax() - 1).min()
+            q_mdd = (q_bal / q_bal.cummax() - 1).min()
+            
+            chart_df = pd.DataFrame({
+                "전략 포트폴리오 (적립식)": (p_bal / pr_series) * 100,
+                "SPY (적립식)": (s_bal / pr_series) * 100,
+                "QQQ (적립식)": (q_bal / pr_series) * 100,
+                "투자 원금 (Break-even)": 100.0
+            })
+            
+        else: 
+            p_cum = (1 + p_rets).cumprod() * 100
+            s_cum = (1 + s_rets).cumprod() * 100
+            q_cum = (1 + q_rets).cumprod() * 100
+            
+            p_tot = (p_cum.iloc[-1] / 100) - 1
+            s_tot = (s_cum.iloc[-1] / 100) - 1
+            q_tot = (q_cum.iloc[-1] / 100) - 1
+            
+            p_cagr = ((p_tot + 1) ** (1 / years)) - 1 if years > 0 else 0
+            s_cagr = ((s_tot + 1) ** (1 / years)) - 1 if years > 0 else 0
+            q_cagr = ((q_tot + 1) ** (1 / years)) - 1 if years > 0 else 0
+            
+            p_mdd = (p_cum / p_cum.cummax() - 1).min()
+            s_mdd = (s_cum / s_cum.cummax() - 1).min()
+            q_mdd = (q_cum / q_cum.cummax() - 1).min()
+            
+            chart_df = pd.DataFrame({
+                "전략 포트폴리오 (거치식)": p_cum, 
+                "SPY (거치식)": s_cum,
+                "QQQ (거치식)": q_cum
+            })
+            
+        p_sharpe = (p_rets.mean() / p_rets.std() * np.sqrt(12)) if p_rets.std() != 0 else 0
+        s_sharpe = (s_rets.mean() / s_rets.std() * np.sqrt(12)) if s_rets.std() != 0 else 0
+        q_sharpe = (q_rets.mean() / q_rets.std() * np.sqrt(12)) if q_rets.std() != 0 else 0
         
         metrics = {
             "p_tot": p_tot, "s_tot": s_tot, "q_tot": q_tot,
@@ -413,8 +481,16 @@ def get_dashboard_backtest(strat_id, m_data, d_data, unrate_data):
         return None, None
 
 def render_dashboard_backtest_ui(strat_id, m_data, d_data, unrate_data):
-    st.write("#### 📊 전략 누적 성과 백테스트 (최대 가용 기간)")
-    metrics, chart_df = get_dashboard_backtest(strat_id, m_data, d_data, unrate_data)
+    st.write(f"#### 📊 전략 누적 성과 백테스트 ({strat_id}번 전략)")
+    
+    inv_type = st.radio(
+        "💡 백테스트 투자 방식 선택", 
+        ["거치식", "월적립식"], 
+        horizontal=True, 
+        key=f"inv_type_dash_{strat_id}"
+    )
+    
+    metrics, chart_df = get_dashboard_backtest(strat_id, m_data, d_data, unrate_data, inv_type)
     
     if chart_df is not None:
         col_m, col_c = st.columns([1, 2])
@@ -422,14 +498,15 @@ def render_dashboard_backtest_ui(strat_id, m_data, d_data, unrate_data):
             start_dt = chart_df.index[0].strftime('%Y-%m-%d')
             end_dt = chart_df.index[-1].strftime('%Y-%m-%d')
             st.markdown(f"**🗓️ 데이터 반영 기간:** `{start_dt}` ~ `{end_dt}`")
+            if inv_type == "월적립식":
+                st.caption("ℹ️ *월적립식 CAGR은 누적된 투자원금의 평균 거치기간을 고려한 근사치(Modified)로 표현됩니다.*")
             
-            # 고급 HTML 비교 테이블 렌더링
             html_table = f"""
             <div style="background-color: #1e2130; padding: 16px; border-radius: 12px; border: 1px solid #2e3147; margin-bottom: 20px;">
                 <table style="width:100%; text-align:right; font-size:1em; border-collapse: collapse;">
                     <tr style="border-bottom: 2px solid #4f8ef7; color:#8b90a8;">
-                        <th style="text-align:left; padding:8px;">성과 지표</th>
-                        <th style="padding:8px; color:#4f8ef7;">전략 포트폴리오</th>
+                        <th style="text-align:left; padding:8px;">{inv_type} 성과</th>
+                        <th style="padding:8px; color:#4f8ef7;">포트폴리오</th>
                         <th style="padding:8px;">SPY</th>
                         <th style="padding:8px;">QQQ</th>
                     </tr>
@@ -463,6 +540,8 @@ def render_dashboard_backtest_ui(strat_id, m_data, d_data, unrate_data):
             st.markdown(html_table, unsafe_allow_html=True)
             
         with col_c:
+            chart_title = "누적 자산 추이 (초기 투자 100 기준)" if inv_type == "거치식" else "원금 대비 자산 평가 비율 (원금=100 본전선)"
+            st.write(f"📈 **{chart_title}**")
             st.line_chart(chart_df)
     else:
         st.info("데이터가 부족하여 백테스트를 수행할 수 없습니다.")
@@ -594,8 +673,10 @@ if app_mode == "🧮 프라이빗 투자 계산기":
         dividend_input = safe_float(dividend_input_str)
         
         st.divider()
-        drop_type = st.radio("하락폭 설정", ["일괄 (매회 동일)", "직접 입력"], horizontal=True)
+        st.write("⚙️ **세부 분할매수 조건 설정**")
         
+        # 1. 하락폭 설정
+        drop_type = st.radio("하락폭 설정", ["일괄 (매회 동일)", "직접 입력"], horizontal=True)
         drops = []
         if drop_type == "일괄 (매회 동일)":
             fixed_drop_str = st.text_input(f"회당 하락 금액 ({sym})", value="1,000" if final_curr == "KRW" else "1.50")
@@ -608,16 +689,30 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                 val_str = drop_cols[i].text_input(f"{i+1}➔{i+2}차", value="1,000" if final_curr == "KRW" else "1.50", key=f"drop_{i}")
                 drops.append(safe_float(val_str))
                 
+        st.write("") # 여백
+        
+        # 2. 배수(비중) 설정
+        mult_type = st.radio("회차별 매수 비중(배수) 설정", ["점진적 증가 (1, 2, 3... 배수)", "직접 입력 (마틴게일 등)"], horizontal=True)
+        multipliers = []
+        if mult_type == "점진적 증가 (1, 2, 3... 배수)":
+            multipliers = [float(i) for i in range(1, steps + 1)]
+        else:
+            st.write("회차별 매수 배수 직접 입력 (예: 1차 1배수, 2차 2배수, 3차 4배수...)")
+            mult_cols = st.columns(steps)
+            for i in range(steps):
+                m_val = mult_cols[i].number_input(f"{i+1}차 배수", min_value=0.1, value=float(i+1), step=1.0, key=f"mult_{i}")
+                multipliers.append(m_val)
+                
         if st.button("개별종목 계산하기", type="primary"):
             if start_price <= 0:
                 st.error("❗ 매수 가격이 0이거나 입력되지 않았습니다. 현재가를 수동으로 입력해 주세요.")
             else:
-                w_sum = (steps * (steps + 1)) / 2
+                w_sum = sum(multipliers)
                 res, t_spent, t_shares = [], 0, 0
                 curr_price = start_price
                 
                 for i in range(1, steps + 1):
-                    target_amt = budget * (i / w_sum)
+                    target_amt = budget * (multipliers[i-1] / w_sum)
                     if i > 1: curr_price -= drops[i-2]
                     if curr_price <= 0: break
                     
@@ -625,7 +720,13 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                     actual = shares * curr_price
                     t_spent += actual
                     t_shares += shares
-                    res.append({"회차": f"{i}차 ({i}배수)", "목표금액": target_amt, "매수가격": curr_price, "매수수량": shares, "체결금액": actual})
+                    res.append({
+                        "회차": f"{i}차 ({multipliers[i-1]:g}배수)", 
+                        "목표금액": target_amt, 
+                        "매수가격": curr_price, 
+                        "매수수량": shares, 
+                        "체결금액": actual
+                    })
                 
                 fmt_rule = "{:,.0f}원" if final_curr == "KRW" else "{:,.2f}$"
                 st.dataframe(pd.DataFrame(res).style.format({"목표금액": fmt_rule, "매수가격": fmt_rule, "체결금액": fmt_rule, "매수수량": "{:,.0f}주"}), use_container_width=True)
@@ -1066,135 +1167,152 @@ elif app_mode == "📊 동적 자산배분 대시보드":
                 "📌 1. 밸런스 전략", "🚀 2. 미국밸런스 섹터 전략", 
                 "🛡️ 3. LAA 전략", "⚡ 4. 한국형가속자산배분전략"
             ])
-            tip_score = get_baa_score(month_data["TIP"])
+            
+            # 🛡️ KeyError 원천 차단: 불러온 데이터프레임에 존재하는 종목만 필터링하는 함수
+            v_tkrs = lambda tkrs: [t for t in tkrs if t in month_data.columns]
             
             with tab1:
                 col1, col2 = st.columns([1, 1])
                 buy1_prev, buy1_curr = {}, {}
+                s1_off, s1_def = v_tkrs(strat1_off), v_tkrs(strat1_def)
                 
-                tip_prev = get_baa_score(month_data["TIP"], -2)
-                if tip_prev > 0:
-                    for a in pd.Series({a: get_baa_score(month_data[a], -2) for a in strat1_off}).nlargest(4).index: buy1_prev[a] = "25.0%"
+                if "TIP" in month_data.columns:
+                    tip_prev = get_baa_score(month_data["TIP"], -2)
+                    if tip_prev > 0 and s1_off:
+                        for a in pd.Series({a: get_baa_score(month_data[a], -2) for a in s1_off}).nlargest(4).index: buy1_prev[a] = "25.0%"
+                    elif s1_def:
+                        buy1_prev[pd.Series({a: get_baa_score(month_data[a], -2) for a in s1_def}).nlargest(1).index[0]] = "100.0%"
+                        
+                    tip_curr = get_baa_score(month_data["TIP"], -1)
+                    if tip_curr > 0 and s1_off:
+                        st.success(f"📈 [이번 달 시장 국면] 공격형 자산 매수장 (TIP 스코어: {tip_curr:.4f})")
+                        for a in pd.Series({a: get_baa_score(month_data[a], -1) for a in s1_off}).nlargest(4).index: buy1_curr[a] = "25.0%"
+                    elif s1_def:
+                        st.warning(f"📉 [이번 달 시장 국면] 방어형 안전자산 대피장 (TIP 스코어: {tip_curr:.4f})")
+                        buy1_curr[pd.Series({a: get_baa_score(month_data[a], -1) for a in s1_def}).nlargest(1).index[0]] = "100.0%"
                 else:
-                    buy1_prev[pd.Series({a: get_baa_score(month_data[a], -2) for a in strat1_def}).nlargest(1).index[0]] = "100.0%"
-                    
-                tip_curr = get_baa_score(month_data["TIP"], -1)
-                if tip_curr > 0:
-                    st.success(f"📈 [이번 달 시장 국면] 공격형 자산 매수장 (TIP 스코어: {tip_curr:.4f})")
-                    for a in pd.Series({a: get_baa_score(month_data[a], -1) for a in strat1_off}).nlargest(4).index: buy1_curr[a] = "25.0%"
-                else:
-                    st.warning(f"📉 [이번 달 시장 국면] 방어형 안전자산 대피장 (TIP 스코어: {tip_curr:.4f})")
-                    buy1_curr[pd.Series({a: get_baa_score(month_data[a], -1) for a in strat1_def}).nlargest(1).index[0]] = "100.0%"
+                    st.error("⚠️ 야후 파이낸스에서 'TIP' 데이터를 불러오지 못해 1번 전략을 계산할 수 없습니다.")
                 
                 with col1:
                     st.write(f"🔙 **지난달 투자 비중 ({month_data.index[-2].strftime('%m월')} 기준)**")
-                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy1_prev.items()]))
+                    if buy1_prev: st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy1_prev.items()]))
                 with col2:
                     st.write(f"🎯 **이번 달 목표 비중 ({month_data.index[-1].strftime('%m월')} 기준)**")
-                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy1_curr.items()]))
+                    if buy1_curr: st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy1_curr.items()]))
                 
                 st.divider()
                 render_dashboard_backtest_ui(1, month_data, data, unrate_data)
                 st.divider()
-                render_dashboard_rebalancer("1", buy1_curr, data)
+                if buy1_curr: render_dashboard_rebalancer("1", buy1_curr, data)
 
             with tab2:
                 col3, col4 = st.columns([1, 1])
                 buy2_prev, buy2_curr = {}, {}
+                s2_off, s2_def = v_tkrs(strat2_off), v_tkrs(strat2_def)
                 
-                if tip_prev > 0:
-                    for a in pd.Series({a: get_baa_score(month_data[a], -2) for a in strat2_off}).nlargest(4).index: buy2_prev[a] = "25.0%"
-                else:
-                    buy2_prev[pd.Series({a: get_baa_score(month_data[a], -2) for a in strat2_def}).nlargest(1).index[0]] = "100.0%"
-                    
-                if tip_curr > 0:
-                    st.success(f"📈 [이번 달 시장 국면] 공격형 자산 매수장 (TIP 스코어: {tip_curr:.4f})")
-                    for a in pd.Series({a: get_baa_score(month_data[a], -1) for a in strat2_off}).nlargest(4).index: buy2_curr[a] = "25.0%"
-                else:
-                    st.warning(f"📉 [이번 달 시장 국면] 방어형 안전자산 대피장 (TIP 스코어: {tip_curr:.4f})")
-                    buy2_curr[pd.Series({a: get_baa_score(month_data[a], -1) for a in strat2_def}).nlargest(1).index[0]] = "100.0%"
+                if "TIP" in month_data.columns:
+                    if tip_prev > 0 and s2_off:
+                        for a in pd.Series({a: get_baa_score(month_data[a], -2) for a in s2_off}).nlargest(4).index: buy2_prev[a] = "25.0%"
+                    elif s2_def:
+                        buy2_prev[pd.Series({a: get_baa_score(month_data[a], -2) for a in s2_def}).nlargest(1).index[0]] = "100.0%"
+                        
+                    if tip_curr > 0 and s2_off:
+                        st.success(f"📈 [이번 달 시장 국면] 공격형 자산 매수장 (TIP 스코어: {tip_curr:.4f})")
+                        for a in pd.Series({a: get_baa_score(month_data[a], -1) for a in s2_off}).nlargest(4).index: buy2_curr[a] = "25.0%"
+                    elif s2_def:
+                        st.warning(f"📉 [이번 달 시장 국면] 방어형 안전자산 대피장 (TIP 스코어: {tip_curr:.4f})")
+                        buy2_curr[pd.Series({a: get_baa_score(month_data[a], -1) for a in s2_def}).nlargest(1).index[0]] = "100.0%"
                 
                 with col3:
                     st.write(f"🔙 **지난달 투자 비중 ({month_data.index[-2].strftime('%m월')} 기준)**")
-                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy2_prev.items()]))
+                    if buy2_prev: st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy2_prev.items()]))
                 with col4:
                     st.write(f"🎯 **이번 달 목표 비중 ({month_data.index[-1].strftime('%m월')} 기준)**")
-                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy2_curr.items()]))
+                    if buy2_curr: st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy2_curr.items()]))
                 
                 st.divider()
                 render_dashboard_backtest_ui(2, month_data, data, unrate_data)
                 st.divider()
-                render_dashboard_rebalancer("2", buy2_curr, data)
+                if buy2_curr: render_dashboard_rebalancer("2", buy2_curr, data)
 
             with tab3:
                 col5, col6 = st.columns([1, 1])
-                buy3_prev = {"IWD": "25.0%", "GLD": "25.0%", "IEF": "25.0%"}
-                buy3_curr = {"IWD": "25.0%", "GLD": "25.0%", "IEF": "25.0%"}
+                buy3_prev, buy3_curr = {}, {}
                 
-                p_date = month_data.index[-2]
-                spy_prev = data[data.index <= p_date]['SPY'].iloc[-1]
-                spy_200_prev = data[data.index <= p_date]['SPY'].rolling(200).mean().iloc[-1]
-                ur_prev_df = unrate_data[unrate_data.index <= p_date]
-                ur_prev = ur_prev_df['UNRATE'].iloc[-1]
-                ur_12_prev = ur_prev_df['UNRATE'].rolling(12).mean().iloc[-1]
-                
-                if (spy_prev < spy_200_prev) and (ur_prev > ur_12_prev): buy3_prev["SHY"] = "25.0%"
-                else: buy3_prev["QQQ"] = "25.0%"
-                
-                spy_curr = data['SPY'].iloc[-1]
-                spy_200 = data['SPY'].rolling(200).mean().iloc[-1]
-                unrate_curr = unrate_data['UNRATE'].iloc[-1]
-                unrate_12 = unrate_data['UNRATE'].rolling(12).mean().iloc[-1]
-                
-                if (spy_curr < spy_200) and (unrate_curr > unrate_12):
-                    st.warning("🚨 [이번 달 시장 국면] 불황장 (안전자산 타이밍) ➔ **SHY 매수**")
-                    buy3_curr["SHY"] = "25.0%"
+                if "SPY" in data.columns and "UNRATE" in unrate_data.columns:
+                    p_date = month_data.index[-2]
+                    spy_prev = data[data.index <= p_date]['SPY'].iloc[-1]
+                    spy_200_prev = data[data.index <= p_date]['SPY'].rolling(200).mean().iloc[-1]
+                    ur_prev_df = unrate_data[unrate_data.index <= p_date]
+                    ur_prev = ur_prev_df['UNRATE'].iloc[-1]
+                    ur_12_prev = ur_prev_df['UNRATE'].rolling(12).mean().iloc[-1]
+                    
+                    for t in ["IWD", "GLD", "IEF"]: buy3_prev[t] = "25.0%"
+                    if (spy_prev < spy_200_prev) and (ur_prev > ur_12_prev): buy3_prev["SHY"] = "25.0%"
+                    else: buy3_prev["QQQ"] = "25.0%"
+                    
+                    spy_curr = data['SPY'].iloc[-1]
+                    spy_200 = data['SPY'].rolling(200).mean().iloc[-1]
+                    unrate_curr = unrate_data['UNRATE'].iloc[-1]
+                    unrate_12 = unrate_data['UNRATE'].rolling(12).mean().iloc[-1]
+                    
+                    for t in ["IWD", "GLD", "IEF"]: buy3_curr[t] = "25.0%"
+                    if (spy_curr < spy_200) and (unrate_curr > unrate_12):
+                        st.warning("🚨 [이번 달 시장 국면] 불황장 (안전자산 타이밍) ➔ **SHY 매수**")
+                        buy3_curr["SHY"] = "25.0%"
+                    else:
+                        st.info("☀️ [이번 달 시장 국면] 평시/회복기 (공격자산 타이밍) ➔ **QQQ 매수**")
+                        buy3_curr["QQQ"] = "25.0%"
                 else:
-                    st.info("☀️ [이번 달 시장 국면] 평시/회복기 (공격자산 타이밍) ➔ **QQQ 매수**")
-                    buy3_curr["QQQ"] = "25.0%"
+                    st.warning("⚠️ LAA 전략에 필요한 핵심 데이터(SPY 또는 실업률)를 야후 파이낸스에서 불러올 수 없습니다.")
                 
                 with col5:
                     st.write(f"🔙 **지난달 투자 비중 ({month_data.index[-2].strftime('%m월')} 기준)**")
-                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy3_prev.items()]))
+                    if buy3_prev: st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy3_prev.items()]))
                 with col6:
                     st.write(f"🎯 **이번 달 목표 비중 ({month_data.index[-1].strftime('%m월')} 기준)**")
-                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy3_curr.items()]))
+                    if buy3_curr: st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy3_curr.items()]))
 
                 st.divider()
                 render_dashboard_backtest_ui(3, month_data, data, unrate_data)
                 st.divider()
-                render_dashboard_rebalancer("3", buy3_curr, data)
+                if buy3_curr: render_dashboard_rebalancer("3", buy3_curr, data)
 
             with tab4:
                 col7, col8 = st.columns([1, 1])
                 buy4_prev, buy4_curr = {} , {}
+                s4_off, s4_def = v_tkrs(strat4_off), v_tkrs(strat4_def)
                 
-                max_sc_prev = pd.Series({a: get_aaa_score(month_data[a], -2) for a in strat4_off}).max()
-                if max_sc_prev > 0:
-                    buy4_prev[pd.Series({a: get_aaa_score(month_data[a], -2) for a in strat4_off}).nlargest(1).index[0]] = "100.0%"
-                else:
-                    buy4_prev[pd.Series({a: month_data[a].iloc[-2]/month_data[a].iloc[-3] for a in strat4_def}).nlargest(1).index[0]] = "100.0%"
+                if s4_off or s4_def:
+                    max_sc_prev = pd.Series({a: get_aaa_score(month_data[a], -2) for a in s4_off}).max() if s4_off else -1
+                    if max_sc_prev > 0 and s4_off:
+                        buy4_prev[pd.Series({a: get_aaa_score(month_data[a], -2) for a in s4_off}).nlargest(1).index[0]] = "100.0%"
+                    elif s4_def:
+                        buy4_prev[pd.Series({a: month_data[a].iloc[-2]/month_data[a].iloc[-3] for a in s4_def}).nlargest(1).index[0]] = "100.0%"
+                        
+                    aaa_scores_curr = pd.Series({a: get_aaa_score(month_data[a], -1) for a in s4_off}) if s4_off else pd.Series(dtype=float)
+                    max_sc_curr = aaa_scores_curr.max() if not aaa_scores_curr.empty else -1
                     
-                aaa_scores_curr = pd.Series({a: get_aaa_score(month_data[a], -1) for a in strat4_off})
-                max_sc_curr = aaa_scores_curr.max()
-                if max_sc_curr > 0:
-                    st.success("📈 [이번 달 시장 국면] 공격형 자산 집중장")
-                    buy4_curr[aaa_scores_curr.nlargest(1).index[0]] = "100.0%"
+                    if max_sc_curr > 0 and s4_off:
+                        st.success("📈 [이번 달 시장 국면] 공격형 자산 집중장")
+                        buy4_curr[aaa_scores_curr.nlargest(1).index[0]] = "100.0%"
+                    elif s4_def:
+                        st.warning("📉 [이번 달 시장 국면] 방어형 자산 대피장")
+                        buy4_curr[pd.Series({a: month_data[a].iloc[-1]/month_data[a].iloc[-2] for a in s4_def}).nlargest(1).index[0]] = "100.0%"
                 else:
-                    st.warning("📉 [이번 달 시장 국면] 방어형 자산 대피장")
-                    buy4_curr[pd.Series({a: month_data[a].iloc[-1]/month_data[a].iloc[-2] for a in strat4_def}).nlargest(1).index[0]] = "100.0%"
+                    st.warning("⚠️ 야후 파이낸스에서 한국형 가속자산배분 ETF 데이터를 정상적으로 받아오지 못했습니다.")
                 
                 with col7:
                     st.write(f"🔙 **지난달 투자 비중 ({month_data.index[-2].strftime('%m월')} 기준)**")
-                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy4_prev.items()]))
+                    if buy4_prev: st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy4_prev.items()]))
                 with col8:
                     st.write(f"🎯 **이번 달 목표 비중 ({month_data.index[-1].strftime('%m월')} 기준)**")
-                    st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy4_curr.items()]))
+                    if buy4_curr: st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy4_curr.items()]))
 
                 st.divider()
                 render_dashboard_backtest_ui(4, month_data, data, unrate_data)
                 st.divider()
-                render_dashboard_rebalancer("4", buy4_curr, data)
+                if buy4_curr: render_dashboard_rebalancer("4", buy4_curr, data)
 
     except Exception as e:
         st.error(f"오류가 발생했습니다: {e}")
