@@ -166,24 +166,49 @@ def get_fear_and_greed():
 
 @st.cache_data(ttl=86400)
 def get_all_search_options():
+    all_auto = []
+    
+    # 🛡️ 독립형 데이터 파싱 구조 기법 적용 (한 시장이 막혀도 나머지는 정상 작동)
     try:
         kospi = fdr.StockListing('KOSPI')
-        kospi_list = (kospi['Name'] + " (" + kospi['Code'] + ".KS)").tolist()
+        all_auto.extend((kospi['Name'] + " (" + kospi['Code'] + ".KS)").tolist())
+    except: pass
+    
+    try:
         kosdaq = fdr.StockListing('KOSDAQ')
-        kosdaq_list = (kosdaq['Name'] + " (" + kosdaq['Code'] + ".KQ)").tolist()
+        all_auto.extend((kosdaq['Name'] + " (" + kosdaq['Code'] + ".KQ)").tolist())
+    except: pass
+    
+    try:
         etf = fdr.StockListing('ETF/KR')
-        etf_list = (etf['Name'] + " (" + etf['Symbol'] + ".KS)").tolist()
-        
+        sym_col = 'Symbol' if 'Symbol' in etf.columns else 'Code'
+        all_auto.extend((etf['Name'] + " (" + etf[sym_col] + ".KS)").tolist())
+    except: pass
+    
+    try:
         sp500 = fdr.StockListing('S&P500')
-        sp500_list = (sp500['Name'] + " (" + sp500['Symbol'] + ")").tolist()
+        all_auto.extend((sp500['Name'] + " (" + sp500['Symbol'] + ")").tolist())
+    except: pass
+    
+    try:
         nasdaq = fdr.StockListing('NASDAQ')
-        nasdaq_list = (nasdaq['Name'] + " (" + nasdaq['Symbol'] + ")").tolist()
+        all_auto.extend((nasdaq['Name'] + " (" + nasdaq['Symbol'] + ")").tolist())
+    except: pass
+    
+    try:
         nyse = fdr.StockListing('NYSE')
-        nyse_list = (nyse['Name'] + " (" + nyse['Symbol'] + ")").tolist()
-        all_auto = list(set(kospi_list + kosdaq_list + etf_list + sp500_list + nasdaq_list + nyse_list))
-    except:
-        all_auto = ["삼성전자 (005930.KS)", "KODEX 200 (069500.KS)", "ACE KRX금현물 (411060.KS)", "TIGER 200 (102110.KS)"]
+        all_auto.extend((nyse['Name'] + " (" + nyse['Symbol'] + ")").tolist())
+    except: pass
         
+    # 만약 유저 통신 환경 문제 등으로 원본 API가 아예 다운됐을 때를 대비한 초강력 에센셜 백업 엔진
+    essential_fallback = [
+        "삼성전자 (005930.KS)", "SK하이닉스 (000660.KS)", "카카오 (035720.KS)", "NAVER (035420.KS)",
+        "현대차 (005380.KS)", "LG에너지솔루션 (373220.KS)", "삼성바이오로직스 (207940.KS)",
+        "KODEX 200 (069500.KS)", "TIGER 200 (102110.KS)", "KODEX 레버리지 (122630.KS)", "KODEX 200선물인버스2X (252670.KS)",
+        "TIGER 미국나스닥100 (133690.KS)", "TIGER 미국S&P500 (360750.KS)", "KODEX 선진국MSCI World (251350.KS)",
+        "KODEX 단기채권 (153130.KS)", "TIGER 단기통안채 (130680.KS)", "ACE KRX금현물 (411060.KS)"
+    ]
+    
     us_etfs_and_commodities = [
         "SPDR S&P 500 ETF (SPY)", "Invesco QQQ Trust (QQQ)", "Vanguard S&P 500 ETF (VOO)", "Invesco NASDAQ 100 ETF (QQQM)",
         "Vanguard Total Stock Market (VTI)", "iShares 20+ Year Treasury Bond (TLT)", "iShares 7-10 Year Treasury Bond (IEF)", 
@@ -192,19 +217,11 @@ def get_all_search_options():
         "Direxion Daily Semiconductor Bull 3X (SOXL)", "Direxion Daily Semiconductor Bear 3X (SOXS)",
         "SPDR Gold Shares (GLD)", "Invesco DB Commodity Tracking (DBC)", "United States Oil Fund (USO)", 
         "Technology Select Sector SPDR (XLK)", "Health Care Select Sector SPDR (XLV)", "Financial Select Sector SPDR (XLF)", 
-        "iShares Semiconductor ETF (SOXX)", "VanEck Semiconductor ETF (SMH)", "Schwab US Dividend Equity ETF (SCHD)"
+        "iShares Semiconductor ETF (SOXX)", "VanEck Semiconductor ETF (SMH)", "Schwab US Dividend Equity ETF (SCHD)",
+        "Apple Inc. (AAPL)", "Microsoft Corp (MSFT)", "NVIDIA Corp (NVDA)", "Amazon.com Inc (AMZN)", "Tesla Inc (TSLA)"
     ]
     
-    kr_essential_etfs = [
-        "TIGER 200 (102110.KS)",
-        "KODEX 200 (069500.KS)",
-        "TIGER 미국나스닥100 (133690.KS)",
-        "KODEX 선진국MSCI World (251350.KS)",
-        "KODEX 단기채권 (153130.KS)",
-        "TIGER 단기통안채 (130680.KS)"
-    ]
-    
-    combined = list(set(all_auto + us_etfs_and_commodities + kr_essential_etfs))
+    combined = list(set(all_auto + essential_fallback + us_etfs_and_commodities))
     return ["직접 입력 (여기에 없는 종목)"] + sorted(combined)
 
 @st.cache_data(ttl=600)
@@ -528,8 +545,7 @@ def render_dashboard_backtest_ui(strat_id, m_data, d_data, unrate_data):
                         <td style="padding:10px; color:#e8eaf0;">{metrics['q_cagr']*100:,.2f}%</td>
                     </tr>
                     <tr style="border-bottom: 1px solid #2e3147;">
-                        <td style="text-align:left; padding:10px; font-weight:bold; color:#e8eaf0;">MDD</td>
-                        <td style="padding:10px; color:#e74c3c; font-weight:bold; font-size:1.1em;">{metrics['p_mdd']*100:,.2f}%</td>
+                        <td style="text-align:left; padding:10px; font-weight:bold; color:#e74c3c; font-weight:bold; font-size:1.1em;">{metrics['p_mdd']*100:,.2f}%</td>
                         <td style="padding:10px; color:#8b90a8;">{metrics['s_mdd']*100:,.2f}%</td>
                         <td style="padding:10px; color:#8b90a8;">{metrics['q_mdd']*100:,.2f}%</td>
                     </tr>
@@ -1021,8 +1037,7 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                                     <td style="padding:12px; color:#e8eaf0;">{q_cagr*100:,.2f}%</td>
                                 </tr>
                                 <tr style="border-bottom: 1px solid #2e3147;">
-                                    <td style="text-align:left; padding:12px; font-weight:bold; color:#e8eaf0;">최대 낙폭 (MDD)</td>
-                                    <td style="padding:12px; color:#e74c3c; font-weight:bold; font-size:1.1em;">{p_mdd*100:,.2f}%</td>
+                                    <td style="text-align:left; padding:12px; font-weight:bold; color:#e74c3c; font-weight:bold; font-size:1.1em;">{p_mdd*100:,.2f}%</td>
                                     <td style="padding:12px; color:#8b90a8;">{s_mdd*100:,.2f}%</td>
                                     <td style="padding:12px; color:#8b90a8;">{q_mdd*100:,.2f}%</td>
                                 </tr>
@@ -1184,7 +1199,6 @@ elif app_mode == "📊 동적 자산배분 대시보드":
                 "🛡️ 3. LAA 전략", "⚡ 4. 한국형가속자산배분전략"
             ])
             
-            # 🛡️ KeyError 원천 차단: 불러온 데이터프레임에 존재하는 종목만 필터링하는 함수
             v_tkrs = lambda tkrs: [t for t in tkrs if t in month_data.columns]
             
             with tab1:
