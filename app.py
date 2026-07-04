@@ -6,6 +6,7 @@ import yfinance as yf
 import pandas_datareader.data as web
 import requests
 import FinanceDataReader as fdr
+import os
 
 # 페이지 기본 설정
 st.set_page_config(page_title="프라이빗 통합 투자 플랫폼", layout="wide")
@@ -168,38 +169,53 @@ def get_fear_and_greed():
 def get_all_search_options():
     all_auto = []
     
-    # 1. 🇰🇷 한국 개별주식 (KRX KIND 서버 다이렉트 파싱 - 유저 제안 엑셀 원본)
-    try:
-        url = "http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13"
-        kind_df = pd.read_html(url, header=0)[0]
-        kind_df['종목코드'] = kind_df['종목코드'].astype(str).str.zfill(6)
-        
-        def make_kind_ticker(row):
-            suffix = ".KS" if '유가증권' in str(row.get('시장구분','')) else ".KQ"
-            return f"{row['회사명']} ({row['종목코드']}{suffix})"
-            
-        all_auto.extend(kind_df.apply(make_kind_ticker, axis=1).tolist())
-    except:
-        # 혹시 직접 통신이 일시적으로 막혔을 경우 fdr API로 이중 백업
+    # 1. 🇰🇷 최우선: 로컬(깃허브 저장소)의 '상장법인목록.xls' 다이렉트 파싱 (가장 완벽한 방법)
+    local_file = '상장법인목록.xls'
+    if os.path.exists(local_file):
         try:
-            krx = fdr.StockListing('KRX')
-            def make_krx_ticker(row):
-                code = str(row.get('Code', row.get('Symbol', '')))
-                name = str(row.get('Name', ''))
-                market = str(row.get('Market', ''))
-                suffix = ".KQ" if "KOSDAQ" in market else ".KS"
-                return f"{name} ({code}{suffix})"
-            all_auto.extend(krx.apply(make_krx_ticker, axis=1).tolist())
-        except: pass
+            # KRX 제공 xls 파일은 실제론 HTML 테이블 형태이므로 read_html로 읽어야 합니다.
+            kind_df = pd.read_html(local_file, header=0)[0]
+            kind_df['종목코드'] = kind_df['종목코드'].astype(str).str.zfill(6)
+            
+            def make_local_ticker(row):
+                market = str(row.get('시장구분', ''))
+                suffix = ".KS" if '유가증권' in market else ".KQ"
+                return f"{row['회사명']} ({row['종목코드']}{suffix})"
+                
+            all_auto.extend(kind_df.apply(make_local_ticker, axis=1).tolist())
+        except Exception as e:
+            pass
 
-    # 2. 🇰🇷 한국 ETF
+    # 2. 로컬 파일에서 읽어오지 못했을 때를 대비한 2중 백업 (기존 API 통신)
+    if not all_auto:
+        try:
+            url = "http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13"
+            kind_df = pd.read_html(url, header=0)[0]
+            kind_df['종목코드'] = kind_df['종목코드'].astype(str).str.zfill(6)
+            def make_kind_ticker(row):
+                suffix = ".KS" if '유가증권' in str(row.get('시장구분','')) else ".KQ"
+                return f"{row['회사명']} ({row['종목코드']}{suffix})"
+            all_auto.extend(kind_df.apply(make_kind_ticker, axis=1).tolist())
+        except: 
+            try:
+                krx = fdr.StockListing('KRX')
+                def make_krx_ticker(row):
+                    code = str(row.get('Code', row.get('Symbol', '')))
+                    name = str(row.get('Name', ''))
+                    market = str(row.get('Market', ''))
+                    suffix = ".KQ" if "KOSDAQ" in market else ".KS"
+                    return f"{name} ({code}{suffix})"
+                all_auto.extend(krx.apply(make_krx_ticker, axis=1).tolist())
+            except: pass
+
+    # 3. 🇰🇷 한국 ETF
     try:
         etf = fdr.StockListing('ETF/KR')
         sym_col = 'Symbol' if 'Symbol' in etf.columns else 'Code'
         all_auto.extend((etf['Name'].astype(str) + " (" + etf[sym_col].astype(str) + ".KS)").tolist())
     except: pass
     
-    # 3. 🇺🇸 미국 주식 (S&P500, NASDAQ, NYSE)
+    # 4. 🇺🇸 미국 주식 (S&P500, NASDAQ, NYSE)
     try:
         sp500 = fdr.StockListing('S&P500')
         all_auto.extend((sp500['Name'].astype(str) + " (" + sp500['Symbol'].astype(str) + ")").tolist())
@@ -540,7 +556,6 @@ def render_dashboard_backtest_ui(strat_id, m_data, d_data, unrate_data):
             if inv_type == "월적립식":
                 st.caption("ℹ️ *월적립식 CAGR은 누적된 투자원금의 평균 거치기간을 고려한 근사치(Modified)로 표현됩니다.*")
             
-            # MDD 칸 누락 버그 완벽 수정 및 정렬 적용
             html_table = f"""
             <div style="background-color: #1e2130; padding: 16px; border-radius: 12px; border: 1px solid #2e3147; margin-bottom: 20px;">
                 <table style="width:100%; text-align:right; font-size:1em; border-collapse: collapse;">
