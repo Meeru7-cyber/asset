@@ -6,3 +6,4 @@ pandas-datareader
 requests
 finance-datareader
 lxml
+openpyxl
