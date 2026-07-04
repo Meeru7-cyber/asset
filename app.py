@@ -166,32 +166,54 @@ def get_fear_and_greed():
 
 @st.cache_data(ttl=86400)
 def get_all_search_options():
-    def fetch_market_data(market_name, suffix):
-        """시장별 종목 데이터를 안전하게 수집하는 헬퍼 함수"""
-        try:
-            df = fdr.StockListing(market_name)
-            if df is None or df.empty:
-                return []
-            # FinanceDataReader 버전별 호환성 (Code vs Symbol)
-            sym_col = 'Symbol' if 'Symbol' in df.columns else 'Code'
-            name_col = 'Name' if 'Name' in df.columns else 'Company'
-            
-            # 문자열로 변환 후 괄호 형태로 결합
-            result = (df[name_col].astype(str) + " (" + df[sym_col].astype(str) + suffix + ")").tolist()
-            return result
-        except Exception:
-            return []
-
-    # 1. 🛡️ 각 시장별 데이터를 독립적으로 수집 (한쪽이 실패해도 다른 쪽은 정상 유지)
     all_auto = []
-    all_auto.extend(fetch_market_data('KOSPI', '.KS'))
-    all_auto.extend(fetch_market_data('KOSDAQ', '.KQ'))
-    all_auto.extend(fetch_market_data('ETF/KR', '.KS'))
-    all_auto.extend(fetch_market_data('S&P500', ''))
-    all_auto.extend(fetch_market_data('NASDAQ', ''))
-    all_auto.extend(fetch_market_data('NYSE', ''))
+    
+    # 1. 🇰🇷 한국 개별주식 (KRX KIND 서버 다이렉트 파싱 - 유저 제안 엑셀 원본)
+    try:
+        url = "http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13"
+        kind_df = pd.read_html(url, header=0)[0]
+        kind_df['종목코드'] = kind_df['종목코드'].astype(str).str.zfill(6)
         
-    # 2. 필수 종목 백업 (API 통신 실패 시를 대비한 하드코딩 리스트)
+        def make_kind_ticker(row):
+            suffix = ".KS" if '유가증권' in str(row.get('시장구분','')) else ".KQ"
+            return f"{row['회사명']} ({row['종목코드']}{suffix})"
+            
+        all_auto.extend(kind_df.apply(make_kind_ticker, axis=1).tolist())
+    except:
+        # 혹시 직접 통신이 일시적으로 막혔을 경우 fdr API로 이중 백업
+        try:
+            krx = fdr.StockListing('KRX')
+            def make_krx_ticker(row):
+                code = str(row.get('Code', row.get('Symbol', '')))
+                name = str(row.get('Name', ''))
+                market = str(row.get('Market', ''))
+                suffix = ".KQ" if "KOSDAQ" in market else ".KS"
+                return f"{name} ({code}{suffix})"
+            all_auto.extend(krx.apply(make_krx_ticker, axis=1).tolist())
+        except: pass
+
+    # 2. 🇰🇷 한국 ETF
+    try:
+        etf = fdr.StockListing('ETF/KR')
+        sym_col = 'Symbol' if 'Symbol' in etf.columns else 'Code'
+        all_auto.extend((etf['Name'].astype(str) + " (" + etf[sym_col].astype(str) + ".KS)").tolist())
+    except: pass
+    
+    # 3. 🇺🇸 미국 주식 (S&P500, NASDAQ, NYSE)
+    try:
+        sp500 = fdr.StockListing('S&P500')
+        all_auto.extend((sp500['Name'].astype(str) + " (" + sp500['Symbol'].astype(str) + ")").tolist())
+    except: pass
+    try:
+        nasdaq = fdr.StockListing('NASDAQ')
+        all_auto.extend((nasdaq['Name'].astype(str) + " (" + nasdaq['Symbol'].astype(str) + ")").tolist())
+    except: pass
+    try:
+        nyse = fdr.StockListing('NYSE')
+        all_auto.extend((nyse['Name'].astype(str) + " (" + nyse['Symbol'].astype(str) + ")").tolist())
+    except: pass
+        
+    # 만약 위의 모든 통신이 실패했을 때를 대비한 최후의 예비 리스트
     essential_fallback = [
         "삼성전자 (005930.KS)", "SK하이닉스 (000660.KS)", "카카오 (035720.KS)", "NAVER (035420.KS)",
         "현대차 (005380.KS)", "LG에너지솔루션 (373220.KS)", "삼성바이오로직스 (207940.KS)",
@@ -212,18 +234,9 @@ def get_all_search_options():
         "Apple Inc. (AAPL)", "Microsoft Corp (MSFT)", "NVIDIA Corp (NVDA)", "Amazon.com Inc (AMZN)", "Tesla Inc (TSLA)"
     ]
     
-    kr_essential_etfs = [
-        "TIGER 200 (102110.KS)",
-        "KODEX 200 (069500.KS)",
-        "TIGER 미국나스닥100 (133690.KS)",
-        "KODEX 선진국MSCI World (251350.KS)",
-        "KODEX 단기채권 (153130.KS)",
-        "TIGER 단기통안채 (130680.KS)"
-    ]
+    combined = list(set(all_auto + essential_fallback + us_etfs_and_commodities))
     
-    combined = list(set(all_auto + essential_fallback + us_etfs_and_commodities + kr_essential_etfs))
-    
-    # NaN 값 제거 및 정리
+    # NaN 값 섞임 방지 처리
     cleaned_options = [x for x in combined if str(x) != 'nan' and isinstance(x, str)]
     
     return ["직접 입력 (여기에 없는 종목)"] + sorted(cleaned_options)
@@ -527,7 +540,7 @@ def render_dashboard_backtest_ui(strat_id, m_data, d_data, unrate_data):
             if inv_type == "월적립식":
                 st.caption("ℹ️ *월적립식 CAGR은 누적된 투자원금의 평균 거치기간을 고려한 근사치(Modified)로 표현됩니다.*")
             
-            # MDD 행의 라벨(<td>MDD</td>) 누락 버그 완벽 수정 적용됨
+            # MDD 칸 누락 버그 완벽 수정 및 정렬 적용
             html_table = f"""
             <div style="background-color: #1e2130; padding: 16px; border-radius: 12px; border: 1px solid #2e3147; margin-bottom: 20px;">
                 <table style="width:100%; text-align:right; font-size:1em; border-collapse: collapse;">
