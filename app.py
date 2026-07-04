@@ -166,40 +166,32 @@ def get_fear_and_greed():
 
 @st.cache_data(ttl=86400)
 def get_all_search_options():
-    kospi_list, kosdaq_list, etf_list, sp500_list, nasdaq_list, nyse_list = [], [], [], [], [], []
-    
-    # NaN 에러로 인한 전체 리스트 누락 방지를 위해 .astype(str) 적용 및 독립적 추출
-    try:
-        kospi = fdr.StockListing('KOSPI')
-        kospi_list = (kospi['Name'].astype(str) + " (" + kospi['Code'].astype(str) + ".KS)").tolist()
-    except: pass
-    
-    try:
-        kosdaq = fdr.StockListing('KOSDAQ')
-        kosdaq_list = (kosdaq['Name'].astype(str) + " (" + kosdaq['Code'].astype(str) + ".KQ)").tolist()
-    except: pass
-    
-    try:
-        etf = fdr.StockListing('ETF/KR')
-        sym_col = 'Symbol' if 'Symbol' in etf.columns else 'Code'
-        etf_list = (etf['Name'].astype(str) + " (" + etf[sym_col].astype(str) + ".KS)").tolist()
-    except: pass
-    
-    try:
-        sp500 = fdr.StockListing('S&P500')
-        sp500_list = (sp500['Name'].astype(str) + " (" + sp500['Symbol'].astype(str) + ")").tolist()
-    except: pass
-    
-    try:
-        nasdaq = fdr.StockListing('NASDAQ')
-        nasdaq_list = (nasdaq['Name'].astype(str) + " (" + nasdaq['Symbol'].astype(str) + ")").tolist()
-    except: pass
-    
-    try:
-        nyse = fdr.StockListing('NYSE')
-        nyse_list = (nyse['Name'].astype(str) + " (" + nyse['Symbol'].astype(str) + ")").tolist()
-    except: pass
+    def fetch_market_data(market_name, suffix):
+        """시장별 종목 데이터를 안전하게 수집하는 헬퍼 함수"""
+        try:
+            df = fdr.StockListing(market_name)
+            if df is None or df.empty:
+                return []
+            # FinanceDataReader 버전별 호환성 (Code vs Symbol)
+            sym_col = 'Symbol' if 'Symbol' in df.columns else 'Code'
+            name_col = 'Name' if 'Name' in df.columns else 'Company'
+            
+            # 문자열로 변환 후 괄호 형태로 결합
+            result = (df[name_col].astype(str) + " (" + df[sym_col].astype(str) + suffix + ")").tolist()
+            return result
+        except Exception:
+            return []
+
+    # 1. 🛡️ 각 시장별 데이터를 독립적으로 수집 (한쪽이 실패해도 다른 쪽은 정상 유지)
+    all_auto = []
+    all_auto.extend(fetch_market_data('KOSPI', '.KS'))
+    all_auto.extend(fetch_market_data('KOSDAQ', '.KQ'))
+    all_auto.extend(fetch_market_data('ETF/KR', '.KS'))
+    all_auto.extend(fetch_market_data('S&P500', ''))
+    all_auto.extend(fetch_market_data('NASDAQ', ''))
+    all_auto.extend(fetch_market_data('NYSE', ''))
         
+    # 2. 필수 종목 백업 (API 통신 실패 시를 대비한 하드코딩 리스트)
     essential_fallback = [
         "삼성전자 (005930.KS)", "SK하이닉스 (000660.KS)", "카카오 (035720.KS)", "NAVER (035420.KS)",
         "현대차 (005380.KS)", "LG에너지솔루션 (373220.KS)", "삼성바이오로직스 (207940.KS)",
@@ -229,9 +221,12 @@ def get_all_search_options():
         "TIGER 단기통안채 (130680.KS)"
     ]
     
-    all_auto = kospi_list + kosdaq_list + etf_list + sp500_list + nasdaq_list + nyse_list
     combined = list(set(all_auto + essential_fallback + us_etfs_and_commodities + kr_essential_etfs))
-    return ["직접 입력 (여기에 없는 종목)"] + sorted(combined)
+    
+    # NaN 값 제거 및 정리
+    cleaned_options = [x for x in combined if str(x) != 'nan' and isinstance(x, str)]
+    
+    return ["직접 입력 (여기에 없는 종목)"] + sorted(cleaned_options)
 
 @st.cache_data(ttl=600)
 def get_stock_info(ticker):
@@ -532,7 +527,7 @@ def render_dashboard_backtest_ui(strat_id, m_data, d_data, unrate_data):
             if inv_type == "월적립식":
                 st.caption("ℹ️ *월적립식 CAGR은 누적된 투자원금의 평균 거치기간을 고려한 근사치(Modified)로 표현됩니다.*")
             
-            # MDD 행의 라벨(<td>MDD</td>) 누락 버그 완벽 수정
+            # MDD 행의 라벨(<td>MDD</td>) 누락 버그 완벽 수정 적용됨
             html_table = f"""
             <div style="background-color: #1e2130; padding: 16px; border-radius: 12px; border: 1px solid #2e3147; margin-bottom: 20px;">
                 <table style="width:100%; text-align:right; font-size:1em; border-collapse: collapse;">
@@ -1026,7 +1021,6 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                         </div>
                         """, unsafe_allow_html=True)
                         
-                        # MDD 라벨 포함하여 테이블 렌더링
                         html_table = f"""
                         <div style="background-color: #1e2130; padding: 20px; border-radius: 12px; border: 1px solid #2e3147; margin-bottom: 20px;">
                             <table style="width:100%; text-align:right; font-size:1em; border-collapse: collapse;">
@@ -1234,7 +1228,7 @@ elif app_mode == "📊 동적 자산배분 대시보드":
                         st.warning(f"📉 [이번 달 시장 국면] 방어형 안전자산 대피장 (TIP 스코어: {tip_curr:.4f})")
                         buy1_curr[pd.Series({a: get_baa_score(month_data[a], -1) for a in s1_def}).nlargest(1).index[0]] = "100.0%"
                 else:
-                    st.error("⚠️ 야 파이낸스에서 'TIP' 데이터를 불러오지 못해 1번 전략을 계산할 수 없습니다.")
+                    st.error("⚠️ 야후 파이낸스에서 'TIP' 데이터를 불러오지 못해 1번 전략을 계산할 수 없습니다.")
                 
                 with col1:
                     st.write(f"🔙 **지난달 투자 비중 ({month_data.index[-2].strftime('%m월')} 기준)**")
