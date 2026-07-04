@@ -166,41 +166,40 @@ def get_fear_and_greed():
 
 @st.cache_data(ttl=86400)
 def get_all_search_options():
-    all_auto = []
+    kospi_list, kosdaq_list, etf_list, sp500_list, nasdaq_list, nyse_list = [], [], [], [], [], []
     
-    # 🛡️ 독립형 데이터 파싱 구조 기법 적용 (한 시장이 막혀도 나머지는 정상 작동)
+    # NaN 에러로 인한 전체 리스트 누락 방지를 위해 .astype(str) 적용 및 독립적 추출
     try:
         kospi = fdr.StockListing('KOSPI')
-        all_auto.extend((kospi['Name'] + " (" + kospi['Code'] + ".KS)").tolist())
+        kospi_list = (kospi['Name'].astype(str) + " (" + kospi['Code'].astype(str) + ".KS)").tolist()
     except: pass
     
     try:
         kosdaq = fdr.StockListing('KOSDAQ')
-        all_auto.extend((kosdaq['Name'] + " (" + kosdaq['Code'] + ".KQ)").tolist())
+        kosdaq_list = (kosdaq['Name'].astype(str) + " (" + kosdaq['Code'].astype(str) + ".KQ)").tolist()
     except: pass
     
     try:
         etf = fdr.StockListing('ETF/KR')
         sym_col = 'Symbol' if 'Symbol' in etf.columns else 'Code'
-        all_auto.extend((etf['Name'] + " (" + etf[sym_col] + ".KS)").tolist())
+        etf_list = (etf['Name'].astype(str) + " (" + etf[sym_col].astype(str) + ".KS)").tolist()
     except: pass
     
     try:
         sp500 = fdr.StockListing('S&P500')
-        all_auto.extend((sp500['Name'] + " (" + sp500['Symbol'] + ")").tolist())
+        sp500_list = (sp500['Name'].astype(str) + " (" + sp500['Symbol'].astype(str) + ")").tolist()
     except: pass
     
     try:
         nasdaq = fdr.StockListing('NASDAQ')
-        all_auto.extend((nasdaq['Name'] + " (" + nasdaq['Symbol'] + ")").tolist())
+        nasdaq_list = (nasdaq['Name'].astype(str) + " (" + nasdaq['Symbol'].astype(str) + ")").tolist()
     except: pass
     
     try:
         nyse = fdr.StockListing('NYSE')
-        all_auto.extend((nyse['Name'] + " (" + nyse['Symbol'] + ")").tolist())
+        nyse_list = (nyse['Name'].astype(str) + " (" + nyse['Symbol'].astype(str) + ")").tolist()
     except: pass
         
-    # 만약 유저 통신 환경 문제 등으로 원본 API가 아예 다운됐을 때를 대비한 초강력 에센셜 백업 엔진
     essential_fallback = [
         "삼성전자 (005930.KS)", "SK하이닉스 (000660.KS)", "카카오 (035720.KS)", "NAVER (035420.KS)",
         "현대차 (005380.KS)", "LG에너지솔루션 (373220.KS)", "삼성바이오로직스 (207940.KS)",
@@ -221,7 +220,17 @@ def get_all_search_options():
         "Apple Inc. (AAPL)", "Microsoft Corp (MSFT)", "NVIDIA Corp (NVDA)", "Amazon.com Inc (AMZN)", "Tesla Inc (TSLA)"
     ]
     
-    combined = list(set(all_auto + essential_fallback + us_etfs_and_commodities))
+    kr_essential_etfs = [
+        "TIGER 200 (102110.KS)",
+        "KODEX 200 (069500.KS)",
+        "TIGER 미국나스닥100 (133690.KS)",
+        "KODEX 선진국MSCI World (251350.KS)",
+        "KODEX 단기채권 (153130.KS)",
+        "TIGER 단기통안채 (130680.KS)"
+    ]
+    
+    all_auto = kospi_list + kosdaq_list + etf_list + sp500_list + nasdaq_list + nyse_list
+    combined = list(set(all_auto + essential_fallback + us_etfs_and_commodities + kr_essential_etfs))
     return ["직접 입력 (여기에 없는 종목)"] + sorted(combined)
 
 @st.cache_data(ttl=600)
@@ -523,6 +532,7 @@ def render_dashboard_backtest_ui(strat_id, m_data, d_data, unrate_data):
             if inv_type == "월적립식":
                 st.caption("ℹ️ *월적립식 CAGR은 누적된 투자원금의 평균 거치기간을 고려한 근사치(Modified)로 표현됩니다.*")
             
+            # MDD 행의 라벨(<td>MDD</td>) 누락 버그 완벽 수정
             html_table = f"""
             <div style="background-color: #1e2130; padding: 16px; border-radius: 12px; border: 1px solid #2e3147; margin-bottom: 20px;">
                 <table style="width:100%; text-align:right; font-size:1em; border-collapse: collapse;">
@@ -545,7 +555,8 @@ def render_dashboard_backtest_ui(strat_id, m_data, d_data, unrate_data):
                         <td style="padding:10px; color:#e8eaf0;">{metrics['q_cagr']*100:,.2f}%</td>
                     </tr>
                     <tr style="border-bottom: 1px solid #2e3147;">
-                        <td style="text-align:left; padding:10px; font-weight:bold; color:#e74c3c; font-weight:bold; font-size:1.1em;">{metrics['p_mdd']*100:,.2f}%</td>
+                        <td style="text-align:left; padding:10px; font-weight:bold; color:#e8eaf0;">MDD</td>
+                        <td style="padding:10px; color:#e74c3c; font-weight:bold; font-size:1.1em;">{metrics['p_mdd']*100:,.2f}%</td>
                         <td style="padding:10px; color:#8b90a8;">{metrics['s_mdd']*100:,.2f}%</td>
                         <td style="padding:10px; color:#8b90a8;">{metrics['q_mdd']*100:,.2f}%</td>
                     </tr>
@@ -1015,6 +1026,7 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                         </div>
                         """, unsafe_allow_html=True)
                         
+                        # MDD 라벨 포함하여 테이블 렌더링
                         html_table = f"""
                         <div style="background-color: #1e2130; padding: 20px; border-radius: 12px; border: 1px solid #2e3147; margin-bottom: 20px;">
                             <table style="width:100%; text-align:right; font-size:1em; border-collapse: collapse;">
@@ -1037,7 +1049,8 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                                     <td style="padding:12px; color:#e8eaf0;">{q_cagr*100:,.2f}%</td>
                                 </tr>
                                 <tr style="border-bottom: 1px solid #2e3147;">
-                                    <td style="text-align:left; padding:12px; font-weight:bold; color:#e74c3c; font-weight:bold; font-size:1.1em;">{p_mdd*100:,.2f}%</td>
+                                    <td style="text-align:left; padding:12px; font-weight:bold; color:#e8eaf0;">최대 낙폭 (MDD)</td>
+                                    <td style="padding:12px; color:#e74c3c; font-weight:bold; font-size:1.1em;">{p_mdd*100:,.2f}%</td>
                                     <td style="padding:12px; color:#8b90a8;">{s_mdd*100:,.2f}%</td>
                                     <td style="padding:12px; color:#8b90a8;">{q_mdd*100:,.2f}%</td>
                                 </tr>
@@ -1221,7 +1234,7 @@ elif app_mode == "📊 동적 자산배분 대시보드":
                         st.warning(f"📉 [이번 달 시장 국면] 방어형 안전자산 대피장 (TIP 스코어: {tip_curr:.4f})")
                         buy1_curr[pd.Series({a: get_baa_score(month_data[a], -1) for a in s1_def}).nlargest(1).index[0]] = "100.0%"
                 else:
-                    st.error("⚠️ 야후 파이낸스에서 'TIP' 데이터를 불러오지 못해 1번 전략을 계산할 수 없습니다.")
+                    st.error("⚠️ 야 파이낸스에서 'TIP' 데이터를 불러오지 못해 1번 전략을 계산할 수 없습니다.")
                 
                 with col1:
                     st.write(f"🔙 **지난달 투자 비중 ({month_data.index[-2].strftime('%m월')} 기준)**")
