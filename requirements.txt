@@ -5,3 +5,4 @@ numpy
 pandas-datareader
 requests
 finance-datareader
+lxml
