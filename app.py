@@ -7,6 +7,8 @@ import pandas_datareader.data as web
 import requests
 import FinanceDataReader as fdr
 import os
+import io
+
 
 # 페이지 기본 설정
 st.set_page_config(page_title="프라이빗 통합 투자 플랫폼", layout="wide")
@@ -166,70 +168,101 @@ def get_fear_and_greed():
     return None, None
 
 @st.cache_data(ttl=86400)
+def get_market_suffix_map():
+    """종목코드 -> '.KS' / '.KQ' 매핑 테이블 (FDR KRX 목록 기반)"""
+    suffix_map = {}
+    try:
+        krx = fdr.StockListing('KRX')
+        code_col = 'Code' if 'Code' in krx.columns else 'Symbol'
+        for _, row in krx.iterrows():
+            code = str(row.get(code_col, '')).strip().zfill(6)
+            market = str(row.get('Market', '')).upper()
+            suffix_map[code] = '.KQ' if 'KOSDAQ' in market else '.KS'
+    except Exception:
+        pass
+    return suffix_map
+
+
+@st.cache_data(ttl=86400)
 def get_all_search_options():
     all_auto = []
-    
-    # 1. 🇰🇷 최우선: 로컬(깃허브 저장소)의 '상장법인목록.xls' 다이렉트 파싱 (가장 완벽한 방법)
+    suffix_map = get_market_suffix_map()
+
+    # 1. 🇰🇷 최우선: FDR KRX 목록 (시장구분 정보가 있어 .KS/.KQ가 정확함)
+    try:
+        krx = fdr.StockListing('KRX')
+        code_col = 'Code' if 'Code' in krx.columns else 'Symbol'
+        for _, row in krx.iterrows():
+            name = str(row.get('Name', '')).strip()
+            code = str(row.get(code_col, '')).strip()
+            if name and code and code[:6].isdigit():
+                market = str(row.get('Market', '')).upper()
+                sfx = '.KQ' if 'KOSDAQ' in market else '.KS'
+                all_auto.append(f"{name} ({code.zfill(6)}{sfx})")
+    except Exception:
+        pass
+
+    # 2. 백업: KOSPI / KOSDAQ 개별 조회
+    if len(all_auto) < 500:
+        for mkt, sfx in [('KOSPI', '.KS'), ('KOSDAQ', '.KQ')]:
+            try:
+                lst = fdr.StockListing(mkt)
+                code_col = 'Code' if 'Code' in lst.columns else 'Symbol'
+                for _, row in lst.iterrows():
+                    name = str(row.get('Name', '')).strip()
+                    code = str(row.get(code_col, '')).strip()
+                    if name and code:
+                        all_auto.append(f"{name} ({code.zfill(6)}{sfx})")
+            except Exception:
+                pass
+
+    # 3. 백업: 로컬 상장법인목록.xls (⚠️ 이 파일엔 시장구분이 없으므로 매핑테이블 사용)
     local_file = '상장법인목록.xls'
-    if os.path.exists(local_file):
+    if len(all_auto) < 500 and os.path.exists(local_file):
         try:
-            # KRX 제공 xls 파일은 실제론 HTML 테이블 형태이므로 read_html로 읽어야 합니다.
             kind_df = pd.read_html(local_file, header=0)[0]
             kind_df['종목코드'] = kind_df['종목코드'].astype(str).str.zfill(6)
-            
-            def make_local_ticker(row):
-                market = str(row.get('시장구분', ''))
-                suffix = ".KS" if '유가증권' in market else ".KQ"
-                return f"{row['회사명']} ({row['종목코드']}{suffix})"
-                
-            all_auto.extend(kind_df.apply(make_local_ticker, axis=1).tolist())
-        except Exception as e:
+            for _, row in kind_df.iterrows():
+                code = row['종목코드']
+                sfx = suffix_map.get(code, '.KS')  # 매핑 없으면 .KS 기본
+                all_auto.append(f"{row['회사명']} ({code}{sfx})")
+        except Exception:
             pass
 
-    # 2. 로컬 파일에서 읽어오지 못했을 때를 대비한 2중 백업 (기존 API 통신)
-    if not all_auto:
+    # 4. 백업: KIND 다운로드 (requests + 헤더로 403 차단 우회)
+    if len(all_auto) < 500:
         try:
-            url = "http://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13"
-            kind_df = pd.read_html(url, header=0)[0]
+            url = "https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13"
+            res = requests.get(url, headers={
+                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+                'Referer': 'https://kind.krx.co.kr/corpgeneral/corpList.do?method=loadInitPage'
+            }, timeout=15)
+            res.encoding = 'euc-kr'
+            kind_df = pd.read_html(io.StringIO(res.text), header=0)[0]
             kind_df['종목코드'] = kind_df['종목코드'].astype(str).str.zfill(6)
-            def make_kind_ticker(row):
-                suffix = ".KS" if '유가증권' in str(row.get('시장구분','')) else ".KQ"
-                return f"{row['회사명']} ({row['종목코드']}{suffix})"
-            all_auto.extend(kind_df.apply(make_kind_ticker, axis=1).tolist())
-        except: 
-            try:
-                krx = fdr.StockListing('KRX')
-                def make_krx_ticker(row):
-                    code = str(row.get('Code', row.get('Symbol', '')))
-                    name = str(row.get('Name', ''))
-                    market = str(row.get('Market', ''))
-                    suffix = ".KQ" if "KOSDAQ" in market else ".KS"
-                    return f"{name} ({code}{suffix})"
-                all_auto.extend(krx.apply(make_krx_ticker, axis=1).tolist())
-            except: pass
+            for _, row in kind_df.iterrows():
+                code = row['종목코드']
+                sfx = suffix_map.get(code, '.KS')
+                all_auto.append(f"{row['회사명']} ({code}{sfx})")
+        except Exception:
+            pass
 
-    # 3. 🇰🇷 한국 ETF
+    # 5. 🇰🇷 한국 ETF
     try:
         etf = fdr.StockListing('ETF/KR')
         sym_col = 'Symbol' if 'Symbol' in etf.columns else 'Code'
-        all_auto.extend((etf['Name'].astype(str) + " (" + etf[sym_col].astype(str) + ".KS)").tolist())
-    except: pass
-    
-    # 4. 🇺🇸 미국 주식 (S&P500, NASDAQ, NYSE)
-    try:
-        sp500 = fdr.StockListing('S&P500')
-        all_auto.extend((sp500['Name'].astype(str) + " (" + sp500['Symbol'].astype(str) + ")").tolist())
-    except: pass
-    try:
-        nasdaq = fdr.StockListing('NASDAQ')
-        all_auto.extend((nasdaq['Name'].astype(str) + " (" + nasdaq['Symbol'].astype(str) + ")").tolist())
-    except: pass
-    try:
-        nyse = fdr.StockListing('NYSE')
-        all_auto.extend((nyse['Name'].astype(str) + " (" + nyse['Symbol'].astype(str) + ")").tolist())
-    except: pass
-        
-    # 만약 위의 모든 통신이 실패했을 때를 대비한 최후의 예비 리스트
+        all_auto.extend((etf['Name'].astype(str) + " (" + etf[sym_col].astype(str).str.zfill(6) + ".KS)").tolist())
+    except Exception:
+        pass
+
+    # 6. 🇺🇸 미국 주식 (기존과 동일)
+    for us_mkt in ['S&P500', 'NASDAQ', 'NYSE']:
+        try:
+            lst = fdr.StockListing(us_mkt)
+            all_auto.extend((lst['Name'].astype(str) + " (" + lst['Symbol'].astype(str) + ")").tolist())
+        except Exception:
+            pass
+
     essential_fallback = [
         "삼성전자 (005930.KS)", "SK하이닉스 (000660.KS)", "카카오 (035720.KS)", "NAVER (035420.KS)",
         "현대차 (005380.KS)", "LG에너지솔루션 (373220.KS)", "삼성바이오로직스 (207940.KS)",
@@ -237,47 +270,80 @@ def get_all_search_options():
         "TIGER 미국나스닥100 (133690.KS)", "TIGER 미국S&P500 (360750.KS)", "KODEX 선진국MSCI World (251350.KS)",
         "KODEX 단기채권 (153130.KS)", "TIGER 단기통안채 (130680.KS)", "ACE KRX금현물 (411060.KS)"
     ]
-    
     us_etfs_and_commodities = [
         "SPDR S&P 500 ETF (SPY)", "Invesco QQQ Trust (QQQ)", "Vanguard S&P 500 ETF (VOO)", "Invesco NASDAQ 100 ETF (QQQM)",
-        "Vanguard Total Stock Market (VTI)", "iShares 20+ Year Treasury Bond (TLT)", "iShares 7-10 Year Treasury Bond (IEF)", 
-        "iShares 1-3 Year Treasury Bond (SHY)", "SPDR Bloomberg 1-3 Month T-Bill (BIL)", 
+        "Vanguard Total Stock Market (VTI)", "iShares 20+ Year Treasury Bond (TLT)", "iShares 7-10 Year Treasury Bond (IEF)",
+        "iShares 1-3 Year Treasury Bond (SHY)", "SPDR Bloomberg 1-3 Month T-Bill (BIL)",
         "ProShares Ultra QQQ (QLD)", "ProShares UltraPro QQQ (TQQQ)", "ProShares UltraPro Short QQQ (SQQQ)",
         "Direxion Daily Semiconductor Bull 3X (SOXL)", "Direxion Daily Semiconductor Bear 3X (SOXS)",
-        "SPDR Gold Shares (GLD)", "Invesco DB Commodity Tracking (DBC)", "United States Oil Fund (USO)", 
-        "Technology Select Sector SPDR (XLK)", "Health Care Select Sector SPDR (XLV)", "Financial Select Sector SPDR (XLF)", 
+        "SPDR Gold Shares (GLD)", "Invesco DB Commodity Tracking (DBC)", "United States Oil Fund (USO)",
+        "Technology Select Sector SPDR (XLK)", "Health Care Select Sector SPDR (XLV)", "Financial Select Sector SPDR (XLF)",
         "iShares Semiconductor ETF (SOXX)", "VanEck Semiconductor ETF (SMH)", "Schwab US Dividend Equity ETF (SCHD)",
         "Apple Inc. (AAPL)", "Microsoft Corp (MSFT)", "NVIDIA Corp (NVDA)", "Amazon.com Inc (AMZN)", "Tesla Inc (TSLA)"
     ]
-    
+
     combined = list(set(all_auto + essential_fallback + us_etfs_and_commodities))
-    
-    # NaN 값 섞임 방지 처리
-    cleaned_options = [x for x in combined if str(x) != 'nan' and isinstance(x, str)]
-    
+    cleaned_options = [x for x in combined if isinstance(x, str) and str(x) != 'nan']
     return ["직접 입력 (여기에 없는 종목)"] + sorted(cleaned_options)
+
 
 @st.cache_data(ttl=600)
 def get_stock_info(ticker):
-    if not ticker or ticker == "직접 입력": return 0.0, 0.0
+    if not ticker or "직접 입력" in ticker: return 0.0, 0.0
+    ticker = ticker.strip()
     price, dividend = 0.0, 0.0
-    if ticker.endswith('.KS') or ticker.endswith('.KQ'):
-        code = ticker.split('.')[0]
+    is_kr = ticker.endswith('.KS') or ticker.endswith('.KQ') or (ticker.isdigit() and len(ticker) == 6)
+
+    if is_kr:
+        code = ticker.split('.')[0].zfill(6)
+        # 1차: 네이버 모바일 API (JSON 구조 변화 대응)
         try:
-            res = requests.get(f"https://m.stock.naver.com/api/stock/{code}/basic", headers={'User-Agent': 'Mozilla/5.0'}, timeout=3)
-            if res.status_code == 200: price = float(res.json()['result']['closePrice'].replace(',', ''))
-        except: pass
-    try:
-        t = yf.Ticker(ticker)
+            res = requests.get(f"https://m.stock.naver.com/api/stock/{code}/basic",
+                               headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
+            if res.status_code == 200:
+                data = res.json()
+                raw = data.get('closePrice') or data.get('result', {}).get('closePrice')
+                if raw: price = float(str(raw).replace(',', ''))
+        except Exception:
+            pass
+        # 2차: FinanceDataReader
         if price == 0.0:
-            hist = t.history(period="1d")
+            try:
+                df = fdr.DataReader(code, datetime.date.today() - datetime.timedelta(days=14))
+                if not df.empty: price = float(df['Close'].iloc[-1])
+            except Exception:
+                pass
+        # 3차: 야후 파이낸스 (.KS와 .KQ 둘 다 시도 → 접미사가 틀려도 복구)
+        working_ticker = ticker
+        if price == 0.0:
+            for sfx in ['.KS', '.KQ']:
+                try:
+                    hist = yf.Ticker(code + sfx).history(period="5d")
+                    if not hist.empty:
+                        price = float(hist['Close'].iloc[-1])
+                        working_ticker = code + sfx
+                        break
+                except Exception:
+                    pass
+        # 배당금 (실패해도 가격은 유지)
+        try:
+            info = yf.Ticker(working_ticker).info
+            div = info.get('dividendRate') or info.get('trailingAnnualDividendRate', 0.0)
+            dividend = float(div) if div else 0.0
+        except Exception:
+            pass
+    else:
+        try:
+            t = yf.Ticker(ticker)
+            hist = t.history(period="5d")
             if not hist.empty: price = float(hist['Close'].iloc[-1])
-        info = t.info
-        div = info.get('dividendRate')
-        if div is None: div = info.get('trailingAnnualDividendRate', 0.0)
-        dividend = float(div) if div is not None else 0.0
-    except: pass
+            info = t.info
+            div = info.get('dividendRate') or info.get('trailingAnnualDividendRate', 0.0)
+            dividend = float(div) if div else 0.0
+        except Exception:
+            pass
     return price, dividend
+
 
 @st.cache_data(ttl=3600)
 def get_pbr_roe_price(ticker):
@@ -682,21 +748,28 @@ st.markdown(banner_html, unsafe_allow_html=True)
 # ==========================================
 st.sidebar.title("네비게이션")
 app_mode = st.sidebar.radio("원하시는 기능을 선택하세요:", ["🧮 프라이빗 투자 계산기", "📊 동적 자산배분 대시보드"])
+if st.sidebar.button("🔄 종목 목록 새로고침"):
+    get_all_search_options.clear()
+    get_market_suffix_map.clear()
+    st.rerun()
 st.sidebar.caption("데이터 제공: Yahoo Finance, FRED, Naver, DART, CNN")
+
 
 # ==========================================
 # 1. 🧮 프라이빗 투자 계산기
 # ==========================================
 if app_mode == "🧮 프라이빗 투자 계산기":
-    
+
     with st.spinner("글로벌 종목 데이터를 동기화 중입니다..."):
         SEARCH_OPTIONS = get_all_search_options()
         EXCH_RATE = get_exchange_rate()
-    
-    tab_stock, tab_idx, tab_asset, tab_backtest, tab_roe = st.tabs([
-        "📊 개별종목 물타기", "📉 지수 물타기", "🗂️ 자산배분 리밸런싱", "⏳ 자산배분 백테스트", "📈 기대수익률(R) 스마트"
-    ])
-    
+
+    # 종목 목록 로딩이 실패했다면(예비 리스트만 남음) 캐시를 비워 다음 실행 시 재시도
+    if len(SEARCH_OPTIONS) < 500:
+        get_all_search_options.clear()
+        get_market_suffix_map.clear()
+        st.warning("⚠️ 한국 전체 종목 목록을 불러오지 못했습니다. 잠시 후 새로고침하거나, 사이드바의 [종목 목록 새로고침]을 눌러주세요. (검색이 안 되는 종목은 '직접 입력'에 코드를 입력하시면 됩니다. 예: 005930.KS)")
+
     # --- 1. 개별종목 물타기 ---
     with tab_stock:
         st.write("개별종목 분할매수 스케줄 계산")
