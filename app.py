@@ -967,7 +967,7 @@ if app_mode == "🧮 프라이빗 투자 계산기":
         st.caption("💡 **포트폴리오 프리셋 빠른 적용**")
         pf_col1, pf_col2 = st.columns(2)
         with pf_col1:
-            if st.button("🧑‍🏫 김성일 포트폴리오 적용", use_container_width=True):
+            if st.button("🧑‍🏫 김성일 변형 포트폴리오 적용", use_container_width=True):
                 st.session_state.asset_df_base = get_kimsungil_portfolio()
                 st.rerun()
         with pf_col2:
