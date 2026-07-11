@@ -941,13 +941,39 @@ if app_mode == "🧮 프라이빗 투자 계산기":
         total_asset_budget_str = st.text_input(f"총 투자 운용 금액 ({base_sym})", key="budget_asset", on_change=format_number_str, args=("budget_asset",))
         total_asset_budget = safe_float(total_asset_budget_str)
 
-        if 'asset_df_base' not in st.session_state:
-            st.session_state.asset_df_base = pd.DataFrame([
+        def get_default_portfolio():
+            return pd.DataFrame([
                 {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "069500" in x), "직접 입력"), "티커 직접입력": "", "통화": "KRW", "현재가": 35000.0, "목표비중(%)": 30.0, "보유수량(주)": 0},
                 {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "360750" in x), "직접 입력"), "티커 직접입력": "", "통화": "KRW", "현재가": 15000.0, "목표비중(%)": 30.0, "보유수량(주)": 0},
                 {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "308620" in x), "직접 입력"), "티커 직접입력": "", "통화": "KRW", "현재가": 11000.0, "목표비중(%)": 20.0, "보유수량(주)": 0},
                 {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "411060" in x), "직접 입력"), "티커 직접입력": "", "통화": "KRW", "현재가": 13000.0, "목표비중(%)": 20.0, "보유수량(주)": 0}
             ])
+
+        def get_kimsungil_portfolio():
+            return pd.DataFrame([
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "360750" in x), "직접 입력"), "티커 직접입력": "360750.KS", "통화": "KRW", "현재가": 0.0, "목표비중(%)": 24.0, "보유수량(주)": 0},
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "069500" in x), "직접 입력"), "티커 직접입력": "069500.KS", "통화": "KRW", "현재가": 0.0, "목표비중(%)": 12.0, "보유수량(주)": 0},
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "453810" in x), "직접 입력"), "티커 직접입력": "453810.KS", "통화": "KRW", "현재가": 0.0, "목표비중(%)": 12.0, "보유수량(주)": 0},
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "411060" in x), "직접 입력"), "티커 직접입력": "411060.KS", "통화": "KRW", "현재가": 0.0, "목표비중(%)": 19.0, "보유수량(주)": 0},
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "385560" in x), "직접 입력"), "티커 직접입력": "385560.KS", "통화": "KRW", "현재가": 0.0, "목표비중(%)": 14.0, "보유수량(주)": 0},
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "305080" in x), "직접 입력"), "티커 직접입력": "305080.KS", "통화": "KRW", "현재가": 0.0, "목표비중(%)": 7.0, "보유수량(주)": 0},
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "464470" in x), "직접 입력"), "티커 직접입력": "464470.KS", "통화": "KRW", "현재가": 0.0, "목표비중(%)": 7.0, "보유수량(주)": 0},
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "449170" in x), "직접 입력"), "티커 직접입력": "449170.KS", "통화": "KRW", "현재가": 0.0, "목표비중(%)": 5.0, "보유수량(주)": 0}
+            ])
+
+        if 'asset_df_base' not in st.session_state:
+            st.session_state.asset_df_base = get_default_portfolio()
+
+        st.caption("💡 **포트폴리오 프리셋 빠른 적용**")
+        pf_col1, pf_col2 = st.columns(2)
+        with pf_col1:
+            if st.button("🧑‍🏫 김성일 포트폴리오 적용", use_container_width=True):
+                st.session_state.asset_df_base = get_kimsungil_portfolio()
+                st.rerun()
+        with pf_col2:
+            if st.button("🔙 기본 포트폴리오 (원래대로)", use_container_width=True):
+                st.session_state.asset_df_base = get_default_portfolio()
+                st.rerun()
 
         column_config = {
             "자산명 (선택)": st.column_config.SelectboxColumn("자산명 (클릭하여 글로벌 전체 검색)", options=SEARCH_OPTIONS, width="large"),
