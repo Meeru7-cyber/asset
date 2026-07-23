@@ -150,7 +150,7 @@ def detect_currency(ticker):
     if ticker.isalpha(): return "USD"
     return "KRW"
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=60)
 def get_fear_and_greed():
     try:
         headers = {
@@ -162,7 +162,7 @@ def get_fear_and_greed():
         res = requests.get("https://production.dataviz.cnn.io/index/fearandgreed/graphdata", headers=headers, timeout=5)
         if res.status_code == 200:
             data = res.json()
-            return int(data['fear_and_greed']['score']), data['fear_and_greed']['rating'].title()
+            return round(float(data['fear_and_greed']['score'])), data['fear_and_greed']['rating'].title()
     except Exception as e: pass
     return None, None
 
@@ -1359,8 +1359,8 @@ elif app_mode == "📊 동적 자산배분 대시보드":
 
         month_data = data.resample('ME').last()
 
-        if len(month_data) < 14:
-            st.error("데이터가 부족합니다. (최소 14개월 필요)")
+        if len(month_data) < 16:
+            st.error("데이터가 부족합니다. (최소 16개월 필요)")
         else:
             st.write(f"📅 실시간 분석 기준일: **{month_data.index[-1].strftime('%Y년 %m월 %d일')}**")
 
@@ -1370,149 +1370,183 @@ elif app_mode == "📊 동적 자산배분 대시보드":
             ])
 
             v_tkrs = lambda tkrs: [t for t in tkrs if t in month_data.columns]
+            
+            # --- 공통 3열 렌더링 UI 헬퍼 함수 ---
+            def render_strategy_weights(b_prev, b_curr, b_next, m_data):
+                c1, c2, c3 = st.columns(3)
+                lbl_prev = (m_data.index[-3] + pd.DateOffset(months=1)).strftime('%m월')
+                lbl_curr = (m_data.index[-2] + pd.DateOffset(months=1)).strftime('%m월')
+                lbl_next = (m_data.index[-1] + pd.DateOffset(months=1)).strftime('%m월')
 
+                def to_df(b_dict):
+                    return pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in b_dict.items()])
+
+                with c1:
+                    st.write(f"🔙 **지난달 비중 ({lbl_prev})**")
+                    if b_prev: st.table(to_df(b_prev))
+                    else: st.info("데이터 부족")
+                with c2:
+                    st.write(f"⏺️ **이번달 비중 ({lbl_curr})**")
+                    if b_curr: st.table(to_df(b_curr))
+                    else: st.info("데이터 부족")
+                with c3:
+                    st.write(f"🎯 **다음달 목표 ({lbl_next})**")
+                    if b_next: st.table(to_df(b_next))
+                    else: st.info("데이터 부족")
+
+            # --- 1번 탭: 밸런스 전략 ---
             with tab1:
-                col1, col2 = st.columns([1, 1])
-                buy1_prev, buy1_curr = {}, {}
+                buy1_prev, buy1_curr, buy1_next = {}, {}, {}
                 s1_off, s1_def = v_tkrs(strat1_off), v_tkrs(strat1_def)
 
                 if "TIP" in month_data.columns:
-                    tip_prev = get_baa_score(month_data["TIP"], -2)
-                    if tip_prev > 0 and s1_off:
-                        for a in pd.Series({a: get_baa_score(month_data[a], -2) for a in s1_off}).nlargest(4).index: buy1_prev[a] = "25.0%"
+                    # 지난달 (-3)
+                    t_p2 = get_baa_score(month_data["TIP"], -3)
+                    if t_p2 > 0 and s1_off:
+                        for a in pd.Series({a: get_baa_score(month_data[a], -3) for a in s1_off}).nlargest(4).index: buy1_prev[a] = "25.0%"
                     elif s1_def:
-                        buy1_prev[pd.Series({a: get_baa_score(month_data[a], -2) for a in s1_def}).nlargest(1).index[0]] = "100.0%"
+                        buy1_prev[pd.Series({a: get_baa_score(month_data[a], -3) for a in s1_def}).nlargest(1).index[0]] = "100.0%"
 
-                    tip_curr = get_baa_score(month_data["TIP"], -1)
-                    if tip_curr > 0 and s1_off:
-                        st.success(f"📈 [이번 달 시장 국면] 공격형 자산 매수장 (TIP 스코어: {tip_curr:.4f})")
-                        for a in pd.Series({a: get_baa_score(month_data[a], -1) for a in s1_off}).nlargest(4).index: buy1_curr[a] = "25.0%"
+                    # 이번달 (-2)
+                    t_p1 = get_baa_score(month_data["TIP"], -2)
+                    if t_p1 > 0 and s1_off:
+                        for a in pd.Series({a: get_baa_score(month_data[a], -2) for a in s1_off}).nlargest(4).index: buy1_curr[a] = "25.0%"
                     elif s1_def:
-                        st.warning(f"📉 [이번 달 시장 국면] 방어형 안전자산 대피장 (TIP 스코어: {tip_curr:.4f})")
-                        buy1_curr[pd.Series({a: get_baa_score(month_data[a], -1) for a in s1_def}).nlargest(1).index[0]] = "100.0%"
+                        buy1_curr[pd.Series({a: get_baa_score(month_data[a], -2) for a in s1_def}).nlargest(1).index[0]] = "100.0%"
+
+                    # 다음달 (-1)
+                    t_c = get_baa_score(month_data["TIP"], -1)
+                    if t_c > 0 and s1_off:
+                        st.success(f"📈 [현재 시장 국면] 공격형 자산 매수장 (TIP 스코어: {t_c:.4f})")
+                        for a in pd.Series({a: get_baa_score(month_data[a], -1) for a in s1_off}).nlargest(4).index: buy1_next[a] = "25.0%"
+                    elif s1_def:
+                        st.warning(f"📉 [현재 시장 국면] 방어형 안전자산 대피장 (TIP 스코어: {t_c:.4f})")
+                        buy1_next[pd.Series({a: get_baa_score(month_data[a], -1) for a in s1_def}).nlargest(1).index[0]] = "100.0%"
                 else:
                     st.error("⚠️ 야후 파이낸스에서 'TIP' 데이터를 불러오지 못해 1번 전략을 계산할 수 없습니다.")
 
-                with col1:
-                    st.write(f"🔙 **지난달 투자 비중 ({month_data.index[-2].strftime('%m월')} 기준)**")
-                    if buy1_prev: st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy1_prev.items()]))
-                with col2:
-                    st.write(f"🎯 **이번 달 목표 비중 ({month_data.index[-1].strftime('%m월')} 기준)**")
-                    if buy1_curr: st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy1_curr.items()]))
-
+                render_strategy_weights(buy1_prev, buy1_curr, buy1_next, month_data)
                 st.divider()
                 render_dashboard_backtest_ui(1, month_data, data, unrate_data)
                 st.divider()
-                if buy1_curr: render_dashboard_rebalancer("1", buy1_curr, data)
+                if buy1_next: render_dashboard_rebalancer("1", buy1_next, data)
 
+            # --- 2번 탭: 미국밸런스 섹터 전략 ---
             with tab2:
-                col3, col4 = st.columns([1, 1])
-                buy2_prev, buy2_curr = {}, {}
+                buy2_prev, buy2_curr, buy2_next = {}, {}, {}
                 s2_off, s2_def = v_tkrs(strat2_off), v_tkrs(strat2_def)
 
                 if "TIP" in month_data.columns:
-                    if tip_prev > 0 and s2_off:
-                        for a in pd.Series({a: get_baa_score(month_data[a], -2) for a in s2_off}).nlargest(4).index: buy2_prev[a] = "25.0%"
+                    # 지난달 (-3)
+                    t_p2 = get_baa_score(month_data["TIP"], -3)
+                    if t_p2 > 0 and s2_off:
+                        for a in pd.Series({a: get_baa_score(month_data[a], -3) for a in s2_off}).nlargest(4).index: buy2_prev[a] = "25.0%"
                     elif s2_def:
-                        buy2_prev[pd.Series({a: get_baa_score(month_data[a], -2) for a in s2_def}).nlargest(1).index[0]] = "100.0%"
+                        buy2_prev[pd.Series({a: get_baa_score(month_data[a], -3) for a in s2_def}).nlargest(1).index[0]] = "100.0%"
 
-                    if tip_curr > 0 and s2_off:
-                        st.success(f"📈 [이번 달 시장 국면] 공격형 자산 매수장 (TIP 스코어: {tip_curr:.4f})")
-                        for a in pd.Series({a: get_baa_score(month_data[a], -1) for a in s2_off}).nlargest(4).index: buy2_curr[a] = "25.0%"
+                    # 이번달 (-2)
+                    t_p1 = get_baa_score(month_data["TIP"], -2)
+                    if t_p1 > 0 and s2_off:
+                        for a in pd.Series({a: get_baa_score(month_data[a], -2) for a in s2_off}).nlargest(4).index: buy2_curr[a] = "25.0%"
                     elif s2_def:
-                        st.warning(f"📉 [이번 달 시장 국면] 방어형 안전자산 대피장 (TIP 스코어: {tip_curr:.4f})")
-                        buy2_curr[pd.Series({a: get_baa_score(month_data[a], -1) for a in s2_def}).nlargest(1).index[0]] = "100.0%"
+                        buy2_curr[pd.Series({a: get_baa_score(month_data[a], -2) for a in s2_def}).nlargest(1).index[0]] = "100.0%"
 
-                with col3:
-                    st.write(f"🔙 **지난달 투자 비중 ({month_data.index[-2].strftime('%m월')} 기준)**")
-                    if buy2_prev: st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy2_prev.items()]))
-                with col4:
-                    st.write(f"🎯 **이번 달 목표 비중 ({month_data.index[-1].strftime('%m월')} 기준)**")
-                    if buy2_curr: st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy2_curr.items()]))
+                    # 다음달 (-1)
+                    t_c = get_baa_score(month_data["TIP"], -1)
+                    if t_c > 0 and s2_off:
+                        st.success(f"📈 [현재 시장 국면] 공격형 자산 매수장 (TIP 스코어: {t_c:.4f})")
+                        for a in pd.Series({a: get_baa_score(month_data[a], -1) for a in s2_off}).nlargest(4).index: buy2_next[a] = "25.0%"
+                    elif s2_def:
+                        st.warning(f"📉 [현재 시장 국면] 방어형 안전자산 대피장 (TIP 스코어: {t_c:.4f})")
+                        buy2_next[pd.Series({a: get_baa_score(month_data[a], -1) for a in s2_def}).nlargest(1).index[0]] = "100.0%"
 
+                render_strategy_weights(buy2_prev, buy2_curr, buy2_next, month_data)
                 st.divider()
                 render_dashboard_backtest_ui(2, month_data, data, unrate_data)
                 st.divider()
-                if buy2_curr: render_dashboard_rebalancer("2", buy2_curr, data)
+                if buy2_next: render_dashboard_rebalancer("2", buy2_next, data)
 
+            # --- 3번 탭: LAA 전략 ---
             with tab3:
-                col5, col6 = st.columns([1, 1])
-                buy3_prev, buy3_curr = {}, {}
+                buy3_prev, buy3_curr, buy3_next = {}, {}, {}
 
                 if "SPY" in data.columns and "UNRATE" in unrate_data.columns:
-                    p_date = month_data.index[-2]
-                    spy_prev = data[data.index <= p_date]['SPY'].iloc[-1]
-                    spy_200_prev = data[data.index <= p_date]['SPY'].rolling(200).mean().iloc[-1]
-                    ur_prev_df = unrate_data[unrate_data.index <= p_date]
-                    ur_prev = ur_prev_df['UNRATE'].iloc[-1]
-                    ur_12_prev = ur_prev_df['UNRATE'].rolling(12).mean().iloc[-1]
+                    def get_laa(idx):
+                        p_date = month_data.index[idx]
+                        d_spy = data[data.index <= p_date]['SPY']
+                        d_ur = unrate_data[unrate_data.index <= p_date]['UNRATE']
+                        if d_spy.empty or d_ur.empty: return {}
 
-                    for t in ["IWD", "GLD", "IEF"]: buy3_prev[t] = "25.0%"
-                    if (spy_prev < spy_200_prev) and (ur_prev > ur_12_prev): buy3_prev["SHY"] = "25.0%"
-                    else: buy3_prev["QQQ"] = "25.0%"
+                        spy_val = d_spy.iloc[-1]
+                        spy_200_val = d_spy.rolling(200).mean().iloc[-1]
+                        ur_val = d_ur.iloc[-1]
+                        ur_12_val = d_ur.rolling(12).mean().iloc[-1]
+
+                        w = {}
+                        for t in ["IWD", "GLD", "IEF"]:
+                            if t in month_data.columns: w[t] = "25.0%"
+                        if (spy_val < spy_200_val) and (ur_val > ur_12_val):
+                            if "SHY" in month_data.columns: w["SHY"] = "25.0%"
+                        else:
+                            if "QQQ" in month_data.columns: w["QQQ"] = "25.0%"
+                        return w
+
+                    buy3_prev = get_laa(-3)
+                    buy3_curr = get_laa(-2)
+                    buy3_next = get_laa(-1)
 
                     spy_curr = data['SPY'].iloc[-1]
                     spy_200 = data['SPY'].rolling(200).mean().iloc[-1]
                     unrate_curr = unrate_data['UNRATE'].iloc[-1]
                     unrate_12 = unrate_data['UNRATE'].rolling(12).mean().iloc[-1]
 
-                    for t in ["IWD", "GLD", "IEF"]: buy3_curr[t] = "25.0%"
                     if (spy_curr < spy_200) and (unrate_curr > unrate_12):
-                        st.warning("🚨 [이번 달 시장 국면] 불황장 (안전자산 타이밍) ➔ **SHY 매수**")
-                        buy3_curr["SHY"] = "25.0%"
+                        st.warning("🚨 [현재 시장 국면] 불황장 (안전자산 타이밍) ➔ **SHY 매수**")
                     else:
-                        st.info("☀️ [이번 달 시장 국면] 평시/회복기 (공격자산 타이밍) ➔ **QQQ 매수**")
-                        buy3_curr["QQQ"] = "25.0%"
+                        st.info("☀️ [현재 시장 국면] 평시/회복기 (공격자산 타이밍) ➔ **QQQ 매수**")
                 else:
                     st.warning("⚠️ LAA 전략에 필요한 핵심 데이터(SPY 또는 실업률)를 야후 파이낸스에서 불러올 수 없습니다.")
 
-                with col5:
-                    st.write(f"🔙 **지난달 투자 비중 ({month_data.index[-2].strftime('%m월')} 기준)**")
-                    if buy3_prev: st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy3_prev.items()]))
-                with col6:
-                    st.write(f"🎯 **이번 달 목표 비중 ({month_data.index[-1].strftime('%m월')} 기준)**")
-                    if buy3_curr: st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy3_curr.items()]))
-
+                render_strategy_weights(buy3_prev, buy3_curr, buy3_next, month_data)
                 st.divider()
                 render_dashboard_backtest_ui(3, month_data, data, unrate_data)
                 st.divider()
-                if buy3_curr: render_dashboard_rebalancer("3", buy3_curr, data)
+                if buy3_next: render_dashboard_rebalancer("3", buy3_next, data)
 
+            # --- 4번 탭: 한국형가속자산배분 전략 ---
             with tab4:
-                col7, col8 = st.columns([1, 1])
-                buy4_prev, buy4_curr = {} , {}
+                buy4_prev, buy4_curr, buy4_next = {} , {}, {}
                 s4_off, s4_def = v_tkrs(strat4_off), v_tkrs(strat4_def)
 
                 if s4_off or s4_def:
-                    max_sc_prev = pd.Series({a: get_aaa_score(month_data[a], -2) for a in s4_off}).max() if s4_off else -1
-                    if max_sc_prev > 0 and s4_off:
-                        buy4_prev[pd.Series({a: get_aaa_score(month_data[a], -2) for a in s4_off}).nlargest(1).index[0]] = "100.0%"
-                    elif s4_def:
-                        buy4_prev[pd.Series({a: month_data[a].iloc[-2]/month_data[a].iloc[-3] for a in s4_def}).nlargest(1).index[0]] = "100.0%"
+                    def get_kaa(idx):
+                        w = {}
+                        max_sc = pd.Series({a: get_aaa_score(month_data[a], idx) for a in s4_off}).max() if s4_off else -1
+                        if max_sc > 0 and s4_off:
+                            w[pd.Series({a: get_aaa_score(month_data[a], idx) for a in s4_off}).nlargest(1).index[0]] = "100.0%"
+                        elif s4_def:
+                            w[pd.Series({a: month_data[a].iloc[idx]/month_data[a].iloc[idx-1] for a in s4_def}).nlargest(1).index[0]] = "100.0%"
+                        return w
+
+                    buy4_prev = get_kaa(-3)
+                    buy4_curr = get_kaa(-2)
+                    buy4_next = get_kaa(-1)
 
                     aaa_scores_curr = pd.Series({a: get_aaa_score(month_data[a], -1) for a in s4_off}) if s4_off else pd.Series(dtype=float)
                     max_sc_curr = aaa_scores_curr.max() if not aaa_scores_curr.empty else -1
 
                     if max_sc_curr > 0 and s4_off:
-                        st.success("📈 [이번 달 시장 국면] 공격형 자산 집중장")
-                        buy4_curr[aaa_scores_curr.nlargest(1).index[0]] = "100.0%"
+                        st.success("📈 [현재 시장 국면] 공격형 자산 집중장")
                     elif s4_def:
-                        st.warning("📉 [이번 달 시장 국면] 방어형 자산 대피장")
-                        buy4_curr[pd.Series({a: month_data[a].iloc[-1]/month_data[a].iloc[-2] for a in s4_def}).nlargest(1).index[0]] = "100.0%"
+                        st.warning("📉 [현재 시장 국면] 방어형 자산 대피장")
                 else:
                     st.warning("⚠️ 야후 파이낸스에서 한국형 가속자산배분 ETF 데이터를 정상적으로 받아오지 못했습니다.")
 
-                with col7:
-                    st.write(f"🔙 **지난달 투자 비중 ({month_data.index[-2].strftime('%m월')} 기준)**")
-                    if buy4_prev: st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy4_prev.items()]))
-                with col8:
-                    st.write(f"🎯 **이번 달 목표 비중 ({month_data.index[-1].strftime('%m월')} 기준)**")
-                    if buy4_curr: st.table(pd.DataFrame([{"Ticker": k, "자산명": asset_names.get(k, k), "비중": v} for k, v in buy4_curr.items()]))
-
+                render_strategy_weights(buy4_prev, buy4_curr, buy4_next, month_data)
                 st.divider()
                 render_dashboard_backtest_ui(4, month_data, data, unrate_data)
                 st.divider()
-                if buy4_curr: render_dashboard_rebalancer("4", buy4_curr, data)
+                if buy4_next: render_dashboard_rebalancer("4", buy4_next, data)
 
     except Exception as e:
         st.error(f"오류가 발생했습니다: {e}")
@@ -1526,7 +1560,7 @@ footer_html = """
     <strong>⚖️ 법적 고지 및 면책사항 (Disclaimer)</strong><br>
     본 웹사이트(플랫폼)에서 제공하는 모든 정보, 데이터, 연산 결과는 투자 결정의 참고 용도로만 제공되며, 그 정확성이나 완전성을 보장하지 않습니다.<br>
     야후 파이낸스(Yahoo Finance), FRED, Naver, DART, CNN Fear & Greed 등 외부 통신망에서 제공되는 실시간 데이터는 시스템 환경에 따라 지연되거나 오류가 발생할 수 있습니다.<br>
-    본 플랫폼의 제작 및 제공자는 사용자의 투자 결과에 대해 어떠한 법적 전적, 도의적 책임도 지지 않습니다.<br>
+    본 플랫폼의 제작 및 제공자는 사용자의 투자 결과에 대해 어떠한 법적, 도의적 책임도 지지 않습니다.<br>
     <strong>모든 최종 투자 판단과 그에 따른 책임은 투자자 본인에게 있습니다.</strong>
 </div>
 """
