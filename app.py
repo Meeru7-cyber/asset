@@ -946,7 +946,7 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                 {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "360750" in x), "직접 입력"), "티커 직접입력": "360750.KS", "통화": "KRW", "현재가": 0.0, "목표비중(%)": 20.0, "보유수량(주)": 0},
                 {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "308620" in x), "직접 입력"), "티커 직접입력": "308620.KS", "통화": "KRW", "현재가": 0.0, "목표비중(%)": 20.0, "보유수량(주)": 0},
                 {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "411060" in x), "직접 입력"), "티커 직접입력": "411060.KS", "통화": "KRW", "현재가": 0.0, "목표비중(%)": 20.0, "보유수량(주)": 0},
-                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "432320" in x), "직접 입력"), "티커 직접입력": "432320.KS", "통화": "KRW", "현재가": 0.0, "목표비중(%)": 20.0, "보유수량(주)": 0}
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "432320" in x), "직접 입력"), "티커 직접입력": "423160.KS", "통화": "KRW", "현재가": 0.0, "목표비중(%)": 20.0, "보유수량(주)": 0}
             ])
 
         if 'asset_df_base' not in st.session_state:
@@ -1085,7 +1085,7 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                 {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "360750" in x), "직접 입력"), "티커 직접입력": "360750.KS", "투입비중(%)": 20.0},
                 {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "308620" in x), "직접 입력"), "티커 직접입력": "308620.KS", "투입비중(%)": 20.0},
                 {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "411060" in x), "직접 입력"), "티커 직접입력": "411060.KS", "투입비중(%)": 20.0},
-                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "432320" in x), "직접 입력"), "티커 직접입력": "432320.KS", "투입비중(%)": 20.0}
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "423160" in x), "직접 입력"), "티커 직접입력": "432320.KS", "투입비중(%)": 20.0}
             ])
 
         if 'bt_df_base' not in st.session_state:
