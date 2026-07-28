@@ -188,7 +188,6 @@ def get_all_search_options():
     all_auto = []
     suffix_map = get_market_suffix_map()
 
-    # 1. 🇰🇷 최우선: FDR KRX 목록 (시장구분 정보가 있어 .KS/.KQ 접미사가 정확함)
     try:
         krx = fdr.StockListing('KRX')
         code_col = 'Code' if 'Code' in krx.columns else 'Symbol'
@@ -199,10 +198,8 @@ def get_all_search_options():
                 market = str(row.get('Market', '')).upper()
                 sfx = '.KQ' if 'KOSDAQ' in market else '.KS'
                 all_auto.append(f"{name} ({code.zfill(6)}{sfx})")
-    except Exception:
-        pass
+    except Exception: pass
 
-    # 2. 백업: KOSPI / KOSDAQ 개별 조회
     if len(all_auto) < 500:
         for mkt, sfx in [('KOSPI', '.KS'), ('KOSDAQ', '.KQ')]:
             try:
@@ -213,10 +210,8 @@ def get_all_search_options():
                     code = str(row.get(code_col, '')).strip()
                     if name and code:
                         all_auto.append(f"{name} ({code.zfill(6)}{sfx})")
-            except Exception:
-                pass
+            except Exception: pass
 
-    # 3. 백업: 로컬 상장법인목록.xls (⚠️ 이 파일엔 시장구분이 없으므로 매핑테이블로 접미사 결정)
     local_file = '상장법인목록.xls'
     if len(all_auto) < 500 and os.path.exists(local_file):
         try:
@@ -226,15 +221,13 @@ def get_all_search_options():
                 code = row['종목코드']
                 sfx = suffix_map.get(code, '.KS')
                 all_auto.append(f"{row['회사명']} ({code}{sfx})")
-        except Exception:
-            pass
+        except Exception: pass
 
-    # 4. 백업: KIND 다운로드 (requests + 헤더로 403 차단 우회)
     if len(all_auto) < 500:
         try:
             url = "https://kind.krx.co.kr/corpgeneral/corpList.do?method=download&searchType=13"
             res = requests.get(url, headers={
-                'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36',
+                'User-Agent': 'Mozilla/5.0',
                 'Referer': 'https://kind.krx.co.kr/corpgeneral/corpList.do?method=loadInitPage'
             }, timeout=15)
             res.encoding = 'euc-kr'
@@ -244,32 +237,27 @@ def get_all_search_options():
                 code = row['종목코드']
                 sfx = suffix_map.get(code, '.KS')
                 all_auto.append(f"{row['회사명']} ({code}{sfx})")
-        except Exception:
-            pass
+        except Exception: pass
 
-    # 5. 🇰🇷 한국 ETF
     try:
         etf = fdr.StockListing('ETF/KR')
         sym_col = 'Symbol' if 'Symbol' in etf.columns else 'Code'
         all_auto.extend((etf['Name'].astype(str) + " (" + etf[sym_col].astype(str).str.zfill(6) + ".KS)").tolist())
-    except Exception:
-        pass
+    except Exception: pass
 
-    # 6. 🇺🇸 미국 주식 (S&P500, NASDAQ, NYSE)
     for us_mkt in ['S&P500', 'NASDAQ', 'NYSE']:
         try:
             lst = fdr.StockListing(us_mkt)
             all_auto.extend((lst['Name'].astype(str) + " (" + lst['Symbol'].astype(str) + ")").tolist())
-        except Exception:
-            pass
+        except Exception: pass
 
-    # 모든 통신이 실패했을 때를 대비한 최후의 예비 리스트
     essential_fallback = [
         "삼성전자 (005930.KS)", "SK하이닉스 (000660.KS)", "카카오 (035720.KS)", "NAVER (035420.KS)",
         "현대차 (005380.KS)", "LG에너지솔루션 (373220.KS)", "삼성바이오로직스 (207940.KS)",
         "KODEX 200 (069500.KS)", "TIGER 200 (102110.KS)", "KODEX 레버리지 (122630.KS)", "KODEX 200선물인버스2X (252670.KS)",
         "TIGER 미국나스닥100 (133690.KS)", "TIGER 미국S&P500 (360750.KS)", "KODEX 선진국MSCI World (251350.KS)",
-        "KODEX 단기채권 (153130.KS)", "TIGER 단기통안채 (130680.KS)", "ACE KRX금현물 (411060.KS)"
+        "KODEX 단기채권 (153130.KS)", "TIGER 단기통안채 (130680.KS)", "ACE KRX금현물 (411060.KS)",
+        "KODEX 미국채10년선물 (308620.KS)", "KODEX KOFR금리액티브(합성) (432320.KS)"
     ]
 
     us_etfs_and_commodities = [
@@ -297,7 +285,6 @@ def get_stock_info(ticker):
 
     if is_kr:
         code = ticker.split('.')[0].zfill(6)
-        # 1차: 네이버 모바일 API (JSON 구조 변화 대응)
         try:
             res = requests.get(f"https://m.stock.naver.com/api/stock/{code}/basic",
                                headers={'User-Agent': 'Mozilla/5.0'}, timeout=5)
@@ -305,16 +292,14 @@ def get_stock_info(ticker):
                 data = res.json()
                 raw = data.get('closePrice') or data.get('result', {}).get('closePrice')
                 if raw: price = float(str(raw).replace(',', ''))
-        except Exception:
-            pass
-        # 2차: FinanceDataReader
+        except Exception: pass
+        
         if price == 0.0:
             try:
                 df = fdr.DataReader(code, datetime.date.today() - datetime.timedelta(days=14))
                 if not df.empty: price = float(df['Close'].iloc[-1])
-            except Exception:
-                pass
-        # 3차: 야후 파이낸스 (.KS와 .KQ 둘 다 시도 -> 접미사가 틀려도 자동 복구)
+            except Exception: pass
+            
         working_ticker = ticker if '.' in ticker else code + ".KS"
         if price == 0.0:
             for sfx in ['.KS', '.KQ']:
@@ -324,15 +309,12 @@ def get_stock_info(ticker):
                         price = float(hist['Close'].iloc[-1])
                         working_ticker = code + sfx
                         break
-                except Exception:
-                    pass
-        # 배당금 (실패해도 가격은 유지)
+                except Exception: pass
         try:
             info = yf.Ticker(working_ticker).info
             div = info.get('dividendRate') or info.get('trailingAnnualDividendRate', 0.0)
             dividend = float(div) if div else 0.0
-        except Exception:
-            pass
+        except Exception: pass
     else:
         try:
             t = yf.Ticker(ticker)
@@ -341,8 +323,7 @@ def get_stock_info(ticker):
             info = t.info
             div = info.get('dividendRate') or info.get('trailingAnnualDividendRate', 0.0)
             dividend = float(div) if div else 0.0
-        except Exception:
-            pass
+        except Exception: pass
     return price, dividend
 
 @st.cache_data(ttl=3600)
@@ -768,7 +749,6 @@ if app_mode == "🧮 프라이빗 투자 계산기":
         SEARCH_OPTIONS = get_all_search_options()
         EXCH_RATE = get_exchange_rate()
 
-    # 종목 목록 로딩 실패 시(예비 리스트만 남음) 캐시를 비워 다음 실행 때 즉시 재시도
     if len(SEARCH_OPTIONS) < 500:
         get_all_search_options.clear()
         get_market_suffix_map.clear()
@@ -811,7 +791,6 @@ if app_mode == "🧮 프라이빗 투자 계산기":
         st.divider()
         st.write("⚙️ **세부 분할매수 조건 설정**")
 
-        # 1. 하락폭 설정
         drop_type = st.radio("하락폭 설정", ["일괄 (매회 동일)", "직접 입력"], horizontal=True)
         drops = []
         if drop_type == "일괄 (매회 동일)":
@@ -825,9 +804,8 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                 val_str = drop_cols[i].text_input(f"{i+1}➔{i+2}차", value="1,000" if final_curr == "KRW" else "1.50", key=f"drop_{i}")
                 drops.append(safe_float(val_str))
 
-        st.write("") # 여백
+        st.write("") 
 
-        # 2. 배수(비중) 설정
         mult_type = st.radio("회차별 매수 비중(배수) 설정", ["점진적 증가 (1, 2, 3... 배수)", "직접 입력 (마틴게일 등)"], horizontal=True)
         multipliers = []
         if mult_type == "점진적 증가 (1, 2, 3... 배수)":
@@ -874,7 +852,7 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                 spent_disp = f"{int(t_spent):,}원" if final_curr == "KRW" else f"{t_spent:,.2f}$"
                 st.success(f"**총 매수금액:** {spent_disp} | **평균단가:** {avg_disp} | **예상 배당률:** {yield_rate:.2f}% | **누적수량:** {t_shares:,.0f}주")
 
-    # --- 2. 지 지수 물타기 ---
+    # --- 2. 지수 물타기 ---
     with tab_idx:
         st.write("지수/ETF 분할매수 스케줄 계산")
         st.info("💡 **안내:** 검색 후 종목의 현재가가 자동으로 나오지 않는다면 수동으로 입력해 주세요. (미국 ETF는 달러로 자동 변환됩니다)")
@@ -961,18 +939,32 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                 {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "449170" in x), "직접 입력"), "티커 직접입력": "449170.KS", "통화": "KRW", "현재가": 0.0, "목표비중(%)": 5.0, "보유수량(주)": 0}
             ])
 
+        # 홍춘욱 5분법 포트폴리오 추가
+        def get_hong_portfolio():
+            return pd.DataFrame([
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "069500" in x), "직접 입력"), "티커 직접입력": "069500.KS", "통화": "KRW", "현재가": 0.0, "목표비중(%)": 20.0, "보유수량(주)": 0},
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "360750" in x), "직접 입력"), "티커 직접입력": "360750.KS", "통화": "KRW", "현재가": 0.0, "목표비중(%)": 20.0, "보유수량(주)": 0},
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "308620" in x), "직접 입력"), "티커 직접입력": "308620.KS", "통화": "KRW", "현재가": 0.0, "목표비중(%)": 20.0, "보유수량(주)": 0},
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "411060" in x), "직접 입력"), "티커 직접입력": "411060.KS", "통화": "KRW", "현재가": 0.0, "목표비중(%)": 20.0, "보유수량(주)": 0},
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "432320" in x), "직접 입력"), "티커 직접입력": "432320.KS", "통화": "KRW", "현재가": 0.0, "목표비중(%)": 20.0, "보유수량(주)": 0}
+            ])
+
         if 'asset_df_base' not in st.session_state:
             st.session_state.asset_df_base = get_default_portfolio()
 
         st.caption("💡 **포트폴리오 프리셋 빠른 적용**")
-        pf_col1, pf_col2 = st.columns(2)
+        pf_col1, pf_col2, pf_col3 = st.columns(3)
         with pf_col1:
+            if st.button("🔙 기본 포트폴리오 (원래대로)", use_container_width=True):
+                st.session_state.asset_df_base = get_default_portfolio()
+                st.rerun()
+        with pf_col2:
             if st.button("🧑‍🏫 김성일 변형 포트폴리오 적용", use_container_width=True):
                 st.session_state.asset_df_base = get_kimsungil_portfolio()
                 st.rerun()
-        with pf_col2:
-            if st.button("🔙 기본 포트폴리오 (원래대로)", use_container_width=True):
-                st.session_state.asset_df_base = get_default_portfolio()
+        with pf_col3:
+            if st.button("📈 홍춘욱 투자 5분법 적용", use_container_width=True):
+                st.session_state.asset_df_base = get_hong_portfolio()
                 st.rerun()
 
         column_config = {
@@ -1086,18 +1078,32 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                 {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "449170" in x), "직접 입력"), "티커 직접입력": "449170.KS", "투입비중(%)": 5.0}
             ])
 
+        # 홍춘욱 5분법 백테스트 프리셋 추가
+        def get_bt_hong_portfolio():
+            return pd.DataFrame([
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "069500" in x), "직접 입력"), "티커 직접입력": "069500.KS", "투입비중(%)": 20.0},
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "360750" in x), "직접 입력"), "티커 직접입력": "360750.KS", "투입비중(%)": 20.0},
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "308620" in x), "직접 입력"), "티커 직접입력": "308620.KS", "투입비중(%)": 20.0},
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "411060" in x), "직접 입력"), "티커 직접입력": "411060.KS", "투입비중(%)": 20.0},
+                {"자산명 (선택)": next((x for x in SEARCH_OPTIONS if "432320" in x), "직접 입력"), "티커 직접입력": "432320.KS", "투입비중(%)": 20.0}
+            ])
+
         if 'bt_df_base' not in st.session_state:
             st.session_state.bt_df_base = get_bt_default_portfolio()
 
         st.caption("💡 **백테스트 포트폴리오 프리셋 빠른 적용**")
-        bt_pf_col1, bt_pf_col2 = st.columns(2)
+        bt_pf_col1, bt_pf_col2, bt_pf_col3 = st.columns(3)
         with bt_pf_col1:
+            if st.button("🔙 기본 포트폴리오 (원래대로)", key="bt_def_btn", use_container_width=True):
+                st.session_state.bt_df_base = get_bt_default_portfolio()
+                st.rerun()
+        with bt_pf_col2:
             if st.button("🧑‍🏫 김성일 변형 포트폴리오 적용", key="bt_kim_btn", use_container_width=True):
                 st.session_state.bt_df_base = get_bt_kimsungil_portfolio()
                 st.rerun()
-        with bt_pf_col2:
-            if st.button("🔙 기본 포트폴리오 (원래대로)", key="bt_def_btn", use_container_width=True):
-                st.session_state.bt_df_base = get_bt_default_portfolio()
+        with bt_pf_col3:
+            if st.button("📈 홍춘욱 투자 5분법 적용", key="bt_hong_btn", use_container_width=True):
+                st.session_state.bt_df_base = get_bt_hong_portfolio()
                 st.rerun()
 
         bt_config = {
@@ -1115,11 +1121,11 @@ if app_mode == "🧮 프라이빗 투자 계산기":
         else:
             st.error(f"❌ **투입 비중 합계: {total_bt_ratio:.1f}%** (비중의 합을 100%로 맞춰주세요!)")
 
-        if st.button("🚀 백테스트 실행", type="primary"):
+        if st.button("🚀 백테스트 실행 (거치식 / 월적립식 동시 연산)", type="primary"):
             if total_bt_ratio != 100:
                 st.error("투입비중의 합이 100%가 아닙니다. 표 아래의 합계를 확인해주세요.")
             else:
-                with st.spinner("과거 데이터를 불러오고 성과를 분석 중입니다..."):
+                with st.spinner("과거 데이터를 불러오고 거치식 및 적립식 성과를 동시에 분석 중입니다..."):
                     asset_weights = {}
                     for idx, row in edited_bt.iterrows():
                         w = row["투입비중(%)"] / 100.0
@@ -1133,7 +1139,6 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                             if ticker:
                                 asset_weights[ticker] = asset_weights.get(ticker, 0) + w
 
-                    # 비교를 위해 SPY, QQQ 기본 추가
                     tickers_to_fetch = list(set(list(asset_weights.keys()) + ["SPY", "QQQ"]))
 
                     try:
@@ -1152,6 +1157,7 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                         spy_ret = daily_ret["SPY"] if "SPY" in daily_ret.columns else pd.Series(0.0, index=daily_ret.index)
                         qqq_ret = daily_ret["QQQ"] if "QQQ" in daily_ret.columns else pd.Series(0.0, index=daily_ret.index)
 
+                        # --- [거치식] 연산 ---
                         port_cum = (1 + port_ret).cumprod() * 100
                         spy_cum = (1 + spy_ret).cumprod() * 100
                         qqq_cum = (1 + qqq_ret).cumprod() * 100
@@ -1168,67 +1174,160 @@ if app_mode == "🧮 프라이빗 투자 계산기":
                             sharpe = (rets.mean() / rets.std() * np.sqrt(252)) if rets.std() != 0 else 0
                             return total_return, cagr, mdd, sharpe
 
-                        p_tot, p_cagr, p_mdd, p_sharpe = get_metrics(port_ret, port_cum)
-                        s_tot, s_cagr, s_mdd, s_sharpe = get_metrics(spy_ret, spy_cum)
-                        q_tot, q_cagr, q_mdd, q_sharpe = get_metrics(qqq_ret, qqq_cum)
+                        p_tot_l, p_cagr_l, p_mdd_l, p_sharpe_l = get_metrics(port_ret, port_cum)
+                        s_tot_l, s_cagr_l, s_mdd_l, s_sharpe_l = get_metrics(spy_ret, spy_cum)
+                        q_tot_l, q_cagr_l, q_mdd_l, q_sharpe_l = get_metrics(qqq_ret, qqq_cum)
+
+                        # --- [월 적립식] 연산 ---
+                        m_port_ret = port_ret.resample('ME').apply(lambda x: (1+x).prod() - 1).dropna()
+                        m_spy_ret = spy_ret.resample('ME').apply(lambda x: (1+x).prod() - 1).dropna()
+                        m_qqq_ret = qqq_ret.resample('ME').apply(lambda x: (1+x).prod() - 1).dropna()
+                        
+                        common_dates = m_port_ret.index
+                        years_m = len(common_dates) / 12
+                        
+                        p_bal, s_bal, q_bal, pr_list = [], [], [], []
+                        p_curr, s_curr, q_curr, pr = 0, 0, 0, 0
+                        
+                        for d in common_dates:
+                            pr += 100
+                            pr_list.append(pr)
+                            p_curr = (p_curr + 100) * (1 + m_port_ret[d])
+                            s_curr = (s_curr + 100) * (1 + m_spy_ret[d])
+                            q_curr = (q_curr + 100) * (1 + m_qqq_ret[d])
+                            
+                            p_bal.append(p_curr)
+                            s_bal.append(s_curr)
+                            q_bal.append(q_curr)
+                            
+                        p_bal = pd.Series(p_bal, index=common_dates)
+                        s_bal = pd.Series(s_bal, index=common_dates)
+                        q_bal = pd.Series(q_bal, index=common_dates)
+                        pr_series = pd.Series(pr_list, index=common_dates)
+                        
+                        if not p_bal.empty:
+                            p_tot_m = (p_bal.iloc[-1] / pr_series.iloc[-1]) - 1
+                            s_tot_m = (s_bal.iloc[-1] / pr_series.iloc[-1]) - 1
+                            q_tot_m = (q_bal.iloc[-1] / pr_series.iloc[-1]) - 1
+                            
+                            p_cagr_m = ((p_tot_m + 1) ** (2 / years_m)) - 1 if years_m > 0 else 0
+                            s_cagr_m = ((s_tot_m + 1) ** (2 / years_m)) - 1 if years_m > 0 else 0
+                            q_cagr_m = ((q_tot_m + 1) ** (2 / years_m)) - 1 if years_m > 0 else 0
+                            
+                            p_mdd_m = (p_bal / p_bal.cummax() - 1).min()
+                            s_mdd_m = (s_bal / s_bal.cummax() - 1).min()
+                            q_mdd_m = (q_bal / q_bal.cummax() - 1).min()
+                            
+                            p_sharpe_m = (m_port_ret.mean() / m_port_ret.std() * np.sqrt(12)) if m_port_ret.std() != 0 else 0
+                            s_sharpe_m = (m_spy_ret.mean() / m_spy_ret.std() * np.sqrt(12)) if m_spy_ret.std() != 0 else 0
+                            q_sharpe_m = (m_qqq_ret.mean() / m_qqq_ret.std() * np.sqrt(12)) if m_qqq_ret.std() != 0 else 0
+                        else:
+                            p_tot_m, s_tot_m, q_tot_m = 0, 0, 0
+                            p_cagr_m, s_cagr_m, q_cagr_m = 0, 0, 0
+                            p_mdd_m, s_mdd_m, q_mdd_m = 0, 0, 0
+                            p_sharpe_m, s_sharpe_m, q_sharpe_m = 0, 0, 0
 
                         st.divider()
                         st.subheader("📊 백테스트 분석 결과")
 
-                        actual_start = port_cum.index[0].strftime('%Y년 %m월 %d일')
-                        actual_end = port_cum.index[-1].strftime('%Y년 %m월 %d일')
-                        st.markdown(f"""
-                        <div style="background-color: rgba(79,142,247,0.12); border-left: 5px solid #4f8ef7; padding: 18px 24px; border-radius: 8px; margin-bottom: 28px;">
-                            <span style="font-size: 1.1em; color: #e8eaf0; font-weight: 700;">🗓️ 실제 데이터 반영 기간: </span>
-                            <span style="font-size: 1.2em; color: #4f8ef7; font-weight: 800; margin-left: 8px; letter-spacing: 0.5px;">{actual_start} &nbsp;➔&nbsp; {actual_end}</span>
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                        html_table = f"""
-                        <div style="background-color: #1e2130; padding: 20px; border-radius: 12px; border: 1px solid #2e3147; margin-bottom: 20px;">
-                            <table style="width:100%; text-align:right; font-size:1em; border-collapse: collapse;">
-                                <tr style="border-bottom: 2px solid #4f8ef7; color:#8b90a8;">
-                                    <th style="text-align:left; padding:10px;">성과 지표</th>
-                                    <th style="padding:10px; color:#4f8ef7;">전략 포트폴리오</th>
-                                    <th style="padding:10px;">SPY (S&P 500)</th>
-                                    <th style="padding:10px;">QQQ (NASDAQ)</th>
-                                </tr>
-                                <tr style="border-bottom: 1px solid #2e3147;">
-                                    <td style="text-align:left; padding:12px; font-weight:bold; color:#e8eaf0;">총 누적 수익률</td>
-                                    <td style="padding:12px; color:#4f8ef7; font-weight:bold; font-size:1.1em;">{p_tot*100:,.2f}%</td>
-                                    <td style="padding:12px; color:#e8eaf0;">{s_tot*100:,.2f}%</td>
-                                    <td style="padding:12px; color:#e8eaf0;">{q_tot*100:,.2f}%</td>
-                                </tr>
-                                <tr style="border-bottom: 1px solid #2e3147;">
-                                    <td style="text-align:left; padding:12px; font-weight:bold; color:#e8eaf0;">연평균 수익률 (CAGR)</td>
-                                    <td style="padding:12px; color:#4f8ef7; font-weight:bold; font-size:1.1em;">{p_cagr*100:,.2f}%</td>
-                                    <td style="padding:12px; color:#e8eaf0;">{s_cagr*100:,.2f}%</td>
-                                    <td style="padding:12px; color:#e8eaf0;">{q_cagr*100:,.2f}%</td>
-                                </tr>
-                                <tr style="border-bottom: 1px solid #2e3147;">
-                                    <td style="text-align:left; padding:12px; font-weight:bold; color:#e8eaf0;">최대 낙폭 (MDD)</td>
-                                    <td style="padding:12px; color:#e74c3c; font-weight:bold; font-size:1.1em;">{p_mdd*100:,.2f}%</td>
-                                    <td style="padding:12px; color:#8b90a8;">{s_mdd*100:,.2f}%</td>
-                                    <td style="padding:12px; color:#8b90a8;">{q_mdd*100:,.2f}%</td>
-                                </tr>
-                                <tr>
-                                    <td style="text-align:left; padding:12px; font-weight:bold; color:#e8eaf0;">위험조정수익률 (Sharpe)</td>
-                                    <td style="padding:12px; color:#4f8ef7; font-weight:bold; font-size:1.1em;">{p_sharpe:.2f}</td>
-                                    <td style="padding:12px; color:#8b90a8;">{s_sharpe:.2f}</td>
-                                    <td style="padding:12px; color:#8b90a8;">{q_sharpe:.2f}</td>
-                                </tr>
-                            </table>
-                        </div>
-                        """
-                        st.markdown(html_table, unsafe_allow_html=True)
-
-                        st.write("📈 **누적 자산 추이 비교 (초기 투자금 100 기준)**")
-                        chart_df = pd.DataFrame({
-                            "전략 포트폴리오": port_cum,
-                            "SPY (미국 S&P 500)": spy_cum,
-                            "QQQ (미국 나스닥)": qqq_cum
-                        })
-                        st.line_chart(chart_df)
+                        if not port_cum.empty:
+                            actual_start = port_cum.index[0].strftime('%Y년 %m월 %d일')
+                            actual_end = port_cum.index[-1].strftime('%Y년 %m월 %d일')
+                            st.markdown(f"""
+                            <div style="background-color: rgba(79,142,247,0.12); border-left: 5px solid #4f8ef7; padding: 18px 24px; border-radius: 8px; margin-bottom: 28px;">
+                                <span style="font-size: 1.1em; color: #e8eaf0; font-weight: 700;">🗓️ 실제 데이터 반영 기간: </span>
+                                <span style="font-size: 1.2em; color: #4f8ef7; font-weight: 800; margin-left: 8px; letter-spacing: 0.5px;">{actual_start} &nbsp;➔&nbsp; {actual_end}</span>
+                            </div>
+                            """, unsafe_allow_html=True)
+                        
+                        # --- 탭 구성 (거치식 vs 월적립식) ---
+                        res_tab_lump, res_tab_month = st.tabs(["💰 거치식 (Lump-sum) 결과", "📅 월 적립식 (Monthly) 결과"])
+                        
+                        with res_tab_lump:
+                            html_table_lump = f"""
+                            <div style="background-color: #1e2130; padding: 20px; border-radius: 12px; border: 1px solid #2e3147; margin-bottom: 20px;">
+                                <table style="width:100%; text-align:right; font-size:1em; border-collapse: collapse;">
+                                    <tr style="border-bottom: 2px solid #4f8ef7; color:#8b90a8;">
+                                        <th style="text-align:left; padding:10px;">거치식 성과 지표</th>
+                                        <th style="padding:10px; color:#4f8ef7;">전략 포트폴리오</th>
+                                        <th style="padding:10px;">SPY (S&P 500)</th>
+                                        <th style="padding:10px;">QQQ (NASDAQ)</th>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid #2e3147;">
+                                        <td style="text-align:left; padding:12px; font-weight:bold; color:#e8eaf0;">총 누적 수익률</td>
+                                        <td style="padding:12px; color:#4f8ef7; font-weight:bold; font-size:1.1em;">{p_tot_l*100:,.2f}%</td>
+                                        <td style="padding:12px; color:#e8eaf0;">{s_tot_l*100:,.2f}%</td>
+                                        <td style="padding:12px; color:#e8eaf0;">{q_tot_l*100:,.2f}%</td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid #2e3147;">
+                                        <td style="text-align:left; padding:12px; font-weight:bold; color:#e8eaf0;">연평균 수익률 (CAGR)</td>
+                                        <td style="padding:12px; color:#4f8ef7; font-weight:bold; font-size:1.1em;">{p_cagr_l*100:,.2f}%</td>
+                                        <td style="padding:12px; color:#e8eaf0;">{s_cagr_l*100:,.2f}%</td>
+                                        <td style="padding:12px; color:#e8eaf0;">{q_cagr_l*100:,.2f}%</td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid #2e3147;">
+                                        <td style="text-align:left; padding:12px; font-weight:bold; color:#e8eaf0;">최대 낙폭 (MDD)</td>
+                                        <td style="padding:12px; color:#e74c3c; font-weight:bold; font-size:1.1em;">{p_mdd_l*100:,.2f}%</td>
+                                        <td style="padding:12px; color:#8b90a8;">{s_mdd_l*100:,.2f}%</td>
+                                        <td style="padding:12px; color:#8b90a8;">{q_mdd_l*100:,.2f}%</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="text-align:left; padding:12px; font-weight:bold; color:#e8eaf0;">위험조정수익률 (Sharpe)</td>
+                                        <td style="padding:12px; color:#4f8ef7; font-weight:bold; font-size:1.1em;">{p_sharpe_l:.2f}</td>
+                                        <td style="padding:12px; color:#8b90a8;">{s_sharpe_l:.2f}</td>
+                                        <td style="padding:12px; color:#8b90a8;">{q_sharpe_l:.2f}</td>
+                                    </tr>
+                                </table>
+                            </div>
+                            """
+                            st.markdown(html_table_lump, unsafe_allow_html=True)
+                            st.write("📈 **누적 자산 추이 비교 (거치식, 초기 투자금 100 기준)**")
+                            chart_df = pd.DataFrame({"전략 포트폴리오": port_cum, "SPY (미국 S&P 500)": spy_cum, "QQQ (미국 나스닥)": qqq_cum})
+                            st.line_chart(chart_df)
+                            
+                        with res_tab_month:
+                            st.caption("ℹ️ *월적립식 CAGR은 누적된 투자원금의 평균 거치기간을 고려한 근사치(Modified)로 표현됩니다.*")
+                            html_table_month = f"""
+                            <div style="background-color: #1e2130; padding: 20px; border-radius: 12px; border: 1px solid #2e3147; margin-bottom: 20px;">
+                                <table style="width:100%; text-align:right; font-size:1em; border-collapse: collapse;">
+                                    <tr style="border-bottom: 2px solid #4f8ef7; color:#8b90a8;">
+                                        <th style="text-align:left; padding:10px;">월 적립식 성과 지표</th>
+                                        <th style="padding:10px; color:#4f8ef7;">전략 포트폴리오</th>
+                                        <th style="padding:10px;">SPY (S&P 500)</th>
+                                        <th style="padding:10px;">QQQ (NASDAQ)</th>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid #2e3147;">
+                                        <td style="text-align:left; padding:12px; font-weight:bold; color:#e8eaf0;">총 수익률 (원금 대비)</td>
+                                        <td style="padding:12px; color:#4f8ef7; font-weight:bold; font-size:1.1em;">{p_tot_m*100:,.2f}%</td>
+                                        <td style="padding:12px; color:#e8eaf0;">{s_tot_m*100:,.2f}%</td>
+                                        <td style="padding:12px; color:#e8eaf0;">{q_tot_m*100:,.2f}%</td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid #2e3147;">
+                                        <td style="text-align:left; padding:12px; font-weight:bold; color:#e8eaf0;">연평균 수익률 (CAGR)</td>
+                                        <td style="padding:12px; color:#4f8ef7; font-weight:bold; font-size:1.1em;">{p_cagr_m*100:,.2f}%</td>
+                                        <td style="padding:12px; color:#e8eaf0;">{s_cagr_m*100:,.2f}%</td>
+                                        <td style="padding:12px; color:#e8eaf0;">{q_cagr_m*100:,.2f}%</td>
+                                    </tr>
+                                    <tr style="border-bottom: 1px solid #2e3147;">
+                                        <td style="text-align:left; padding:12px; font-weight:bold; color:#e8eaf0;">최대 낙폭 (MDD)</td>
+                                        <td style="padding:12px; color:#e74c3c; font-weight:bold; font-size:1.1em;">{p_mdd_m*100:,.2f}%</td>
+                                        <td style="padding:12px; color:#8b90a8;">{s_mdd_m*100:,.2f}%</td>
+                                        <td style="padding:12px; color:#8b90a8;">{q_mdd_m*100:,.2f}%</td>
+                                    </tr>
+                                    <tr>
+                                        <td style="text-align:left; padding:12px; font-weight:bold; color:#e8eaf0;">위험조정수익률 (Sharpe)</td>
+                                        <td style="padding:12px; color:#4f8ef7; font-weight:bold; font-size:1.1em;">{p_sharpe_m:.2f}</td>
+                                        <td style="padding:12px; color:#8b90a8;">{s_sharpe_m:.2f}</td>
+                                        <td style="padding:12px; color:#8b90a8;">{q_sharpe_m:.2f}</td>
+                                    </tr>
+                                </table>
+                            </div>
+                            """
+                            st.markdown(html_table_month, unsafe_allow_html=True)
+                            st.write("📈 **원금 대비 자산 평가 비율 추이 (월 적립식, 투자 원금 100 본전선 기준)**")
+                            if not p_bal.empty:
+                                chart_df_m = pd.DataFrame({"전략 포트폴리오 (적립식)": (p_bal / pr_series) * 100, "SPY (적립식)": (s_bal / pr_series) * 100, "QQQ (적립식)": (q_bal / pr_series) * 100, "투자 원금 (Break-even)": 100.0})
+                                st.line_chart(chart_df_m)
 
                     except Exception as e:
                         st.error(f"백테스트 진행 중 오류가 발생했습니다. 종목 코드나 날짜 범위를 다시 확인해주세요. (사유: {e})")
@@ -1371,7 +1470,6 @@ elif app_mode == "📊 동적 자산배분 대시보드":
 
             v_tkrs = lambda tkrs: [t for t in tkrs if t in month_data.columns]
             
-            # --- 공통 3열 렌더링 UI 헬퍼 함수 ---
             def render_strategy_weights(b_prev, b_curr, b_next, m_data):
                 c1, c2, c3 = st.columns(3)
                 lbl_prev = (m_data.index[-3] + pd.DateOffset(months=1)).strftime('%m월')
@@ -1394,27 +1492,23 @@ elif app_mode == "📊 동적 자산배분 대시보드":
                     if b_next: st.table(to_df(b_next))
                     else: st.info("데이터 부족")
 
-            # --- 1번 탭: 밸런스 전략 ---
             with tab1:
                 buy1_prev, buy1_curr, buy1_next = {}, {}, {}
                 s1_off, s1_def = v_tkrs(strat1_off), v_tkrs(strat1_def)
 
                 if "TIP" in month_data.columns:
-                    # 지난달 (-3)
                     t_p2 = get_baa_score(month_data["TIP"], -3)
                     if t_p2 > 0 and s1_off:
                         for a in pd.Series({a: get_baa_score(month_data[a], -3) for a in s1_off}).nlargest(4).index: buy1_prev[a] = "25.0%"
                     elif s1_def:
                         buy1_prev[pd.Series({a: get_baa_score(month_data[a], -3) for a in s1_def}).nlargest(1).index[0]] = "100.0%"
 
-                    # 이번달 (-2)
                     t_p1 = get_baa_score(month_data["TIP"], -2)
                     if t_p1 > 0 and s1_off:
                         for a in pd.Series({a: get_baa_score(month_data[a], -2) for a in s1_off}).nlargest(4).index: buy1_curr[a] = "25.0%"
                     elif s1_def:
                         buy1_curr[pd.Series({a: get_baa_score(month_data[a], -2) for a in s1_def}).nlargest(1).index[0]] = "100.0%"
 
-                    # 다음달 (-1)
                     t_c = get_baa_score(month_data["TIP"], -1)
                     if t_c > 0 and s1_off:
                         st.success(f"📈 [현재 시장 국면] 공격형 자산 매수장 (TIP 스코어: {t_c:.4f})")
@@ -1431,27 +1525,23 @@ elif app_mode == "📊 동적 자산배분 대시보드":
                 st.divider()
                 if buy1_next: render_dashboard_rebalancer("1", buy1_next, data)
 
-            # --- 2번 탭: 미국밸런스 섹터 전략 ---
             with tab2:
                 buy2_prev, buy2_curr, buy2_next = {}, {}, {}
                 s2_off, s2_def = v_tkrs(strat2_off), v_tkrs(strat2_def)
 
                 if "TIP" in month_data.columns:
-                    # 지난달 (-3)
                     t_p2 = get_baa_score(month_data["TIP"], -3)
                     if t_p2 > 0 and s2_off:
                         for a in pd.Series({a: get_baa_score(month_data[a], -3) for a in s2_off}).nlargest(4).index: buy2_prev[a] = "25.0%"
                     elif s2_def:
                         buy2_prev[pd.Series({a: get_baa_score(month_data[a], -3) for a in s2_def}).nlargest(1).index[0]] = "100.0%"
 
-                    # 이번달 (-2)
                     t_p1 = get_baa_score(month_data["TIP"], -2)
                     if t_p1 > 0 and s2_off:
                         for a in pd.Series({a: get_baa_score(month_data[a], -2) for a in s2_off}).nlargest(4).index: buy2_curr[a] = "25.0%"
                     elif s2_def:
                         buy2_curr[pd.Series({a: get_baa_score(month_data[a], -2) for a in s2_def}).nlargest(1).index[0]] = "100.0%"
 
-                    # 다음달 (-1)
                     t_c = get_baa_score(month_data["TIP"], -1)
                     if t_c > 0 and s2_off:
                         st.success(f"📈 [현재 시장 국면] 공격형 자산 매수장 (TIP 스코어: {t_c:.4f})")
@@ -1466,7 +1556,6 @@ elif app_mode == "📊 동적 자산배분 대시보드":
                 st.divider()
                 if buy2_next: render_dashboard_rebalancer("2", buy2_next, data)
 
-            # --- 3번 탭: LAA 전략 ---
             with tab3:
                 buy3_prev, buy3_curr, buy3_next = {}, {}, {}
 
@@ -1513,7 +1602,6 @@ elif app_mode == "📊 동적 자산배분 대시보드":
                 st.divider()
                 if buy3_next: render_dashboard_rebalancer("3", buy3_next, data)
 
-            # --- 4번 탭: 한국형가속자산배분 전략 ---
             with tab4:
                 buy4_prev, buy4_curr, buy4_next = {} , {}, {}
                 s4_off, s4_def = v_tkrs(strat4_off), v_tkrs(strat4_def)
